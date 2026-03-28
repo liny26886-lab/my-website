@@ -5,7 +5,7 @@ import feedparser
 import re
 
 # ===== 基本設定 =====
-st.set_page_config(page_title="PTT 智能搜尋器 Pro", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="智能搜尋器 Pro", page_icon="🔍", layout="wide")
 
 # ===== Session 初始化 =====
 for key in ["ptt", "news", "searched", "keyword"]:
@@ -13,37 +13,79 @@ for key in ["ptt", "news", "searched", "keyword"]:
         st.session_state[key] = [] if key not in ["searched", "keyword"] else False
 
 # ===== 高亮關鍵字 =====
-def highlight(text, keywords):
+def highlight(text, keyword):
     if not text:
         return ""
-    # 逐個關鍵字高亮
-    for kw in keywords:
-        text = re.sub(f"({re.escape(kw)})",
-                      r"<span style='color:#ffea00;font-weight:bold'>\1</span>",
-                      text,
-                      flags=re.IGNORECASE)
-    return text
+    return re.sub(f"({'|'.join(map(re.escape, keyword.split()))})",
+                  r"<span style='color:#ffea00;font-weight:bold'>\1</span>",
+                  text,
+                  flags=re.IGNORECASE)
+
+# ===== 計算文章相關度 =====
+def compute_relevance(text, keywords):
+    count = 0
+    for k in keywords:
+        count += text.lower().count(k.lower())
+    return count
 
 # ===== PTT 官方搜尋 =====
-def fetch_ptt_official_search(keyword, board="Gossiping", limit=10):
+def fetch_ptt(keyword, board="Gossiping", limit=5, max_pages=5):
+    """
+    從最新文章逐頁抓取 PTT 文章，拆解關鍵字計算相關度，
+    刪除相關度為 0 的文章，並返回前 limit 筆。
+    """
+    import requests
+    from bs4 import BeautifulSoup
+    import re
+
     PTT_URL = "https://www.ptt.cc"
-    SEARCH_URL = f"{PTT_URL}/bbs/{board}/SearchResult.jsp"
-    headers = {"User-Agent": "Mozilla/5.0"}
     cookies = {"over18": "1"}
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    keywords = re.split(r"\s+", keyword)  # 拆解關鍵字
     articles = []
 
+    # 從最新頁開始抓
     try:
-        payload = {"keyword": keyword, "searchtype": "title", "start": "0"}
-        res = requests.post(SEARCH_URL, data=payload, headers=headers, cookies=cookies, timeout=5)
-        soup = BeautifulSoup(res.text, "html.parser")
-        entries = soup.select(".r-ent .title a")
-        for a in entries:
-            title = a.text.strip()
-            link = PTT_URL + a["href"]
-            articles.append({"title": title, "link": link})
-    except Exception as e:
-        st.warning(f"PTT 搜尋遇到問題: {e}")
+        index_res = requests.get(f"{PTT_URL}/bbs/{board}/index.html", headers=headers, cookies=cookies, timeout=5)
+        index_soup = BeautifulSoup(index_res.text, "html.parser")
+        # 找到最新頁數
+        btn = index_soup.select("a.btn.wide")
+        max_index = 0
+        for b in btn:
+            if "上頁" in b.text:
+                href = b["href"]
+                match = re.search(r"index(\d+).html", href)
+                if match:
+                    max_index = int(match.group(1)) + 1  # 最新頁
+                    break
+    except Exception:
+        return []
 
+    # 逐頁抓文章
+    pages_checked = 0
+    for page_num in range(max_index, max_index - max_pages, -1):
+        if page_num <= 0:
+            break
+        try:
+            res = requests.get(f"{PTT_URL}/bbs/{board}/index{page_num}.html", headers=headers, cookies=cookies, timeout=5)
+            soup = BeautifulSoup(res.text, "html.parser")
+            entries = soup.select(".r-ent .title a")
+            for a in entries:
+                title = a.text.strip()
+                link = PTT_URL + a["href"]
+                # 計算相關度
+                score = sum(1 for kw in keywords if kw.lower() in title.lower())
+                if score > 0:
+                    articles.append({"title": title, "link": link, "score": score})
+        except Exception:
+            continue
+        pages_checked += 1
+        if pages_checked >= max_pages:
+            break
+
+    # 按相關度排序，取前 limit 筆
+    articles = sorted(articles, key=lambda x: x["score"], reverse=True)[:limit]
     return articles
 
 # ===== 自由時報新聞搜尋（RSS） =====
@@ -52,23 +94,20 @@ def fetch_news(keyword, limit=10):
     articles = []
     try:
         feed = feedparser.parse(RSS_URL)
-    except Exception:
+    except:
         return []
 
+    keywords_list = keyword.split()
     for entry in feed.entries:
         title = BeautifulSoup(entry.title, "html.parser").text
         link = entry.link
-        articles.append({"title": title, "link": link})
-    return articles
+        relevance = compute_relevance(title, keywords_list)
+        if relevance > 0:
+            articles.append({"title": title, "link": link, "relevance": relevance})
 
-# ===== 計算匹配度 =====
-def match_score(title, keywords):
-    score = 0
-    title_lower = title.lower()
-    for kw in keywords:
-        if kw.lower() in title_lower:
-            score += 1
-    return score
+    # 依相關度排序並取前 limit 筆
+    articles.sort(key=lambda x: x["relevance"], reverse=True)
+    return articles[:limit]
 
 # ===== AI 摘要（簡化版） =====
 def fake_summary(data):
@@ -78,7 +117,7 @@ def fake_summary(data):
 
 # ===== UI =====
 st.title("🔍 智能搜尋器 Pro")
-st.markdown("### 🚀 PTT / 自由時報新聞 一站式搜尋（關鍵字拆解 + 排序）")
+st.markdown("### 🚀 PTT / 自由時報新聞 一站式搜尋")
 
 col1, col2 = st.columns([3,1])
 with col1:
@@ -88,12 +127,10 @@ with col2:
 
 if st.button("開始搜尋 🔍") and keyword:
     with st.spinner("搜尋中..."):
-        keywords = keyword.split()  # 拆解關鍵字
-        st.session_state.ptt = fetch_ptt_official_search(keyword, limit=50)  # 先抓多一點
-        st.session_state.news = fetch_news(keyword, limit=50)
+        st.session_state.ptt = fetch_ptt_official_search(keyword, limit)
+        st.session_state.news = fetch_news(keyword, limit)
         st.session_state.keyword = keyword
         st.session_state.searched = True
-        st.session_state.keywords_list = keywords
 
 if st.session_state.searched:
     st.success(f"搜尋關鍵字：{st.session_state.keyword}")
@@ -101,23 +138,13 @@ if st.session_state.searched:
 
     data = st.session_state.ptt if source == "PTT" else st.session_state.news
 
-    # 計算匹配度
-    for article in data:
-        article["score"] = match_score(article["title"], st.session_state.keywords_list)
-
-    # 按匹配度排序
-    data_sorted = sorted(data, key=lambda x: x["score"], reverse=True)
-
-    # 取前 5 筆
-    top5 = data_sorted[:5]
-
-    st.info(f"共找到 {len(data)} 筆資料，前 5 筆最相關")
-
+    st.info(f"共找到 {len(data)} 筆資料")
     st.markdown("### 🧠 AI 摘要")
-    st.write(fake_summary(top5))
+    st.write(fake_summary(data))
 
-    for article in top5:
-        title = highlight(article["title"], st.session_state.keywords_list)
+    # 顯示前5筆
+    for article in data[:5]:
+        title = highlight(article["title"], st.session_state.keyword)
         st.markdown(f"""
         <div style="
             background:#1e1e1e;
@@ -127,8 +154,5 @@ if st.session_state.searched:
         ">
             <h4 style="color:white;">{title}</h4>
             <a href="{article['link']}" target="_blank" style="color:#4da6ff;">查看文章 →</a>
-            <p style="color:#ffea00;">匹配關鍵字數量：{article['score']}</p>
         </div>
         """, unsafe_allow_html=True)
-else:
-    st.warning("請先輸入關鍵字並搜尋")
