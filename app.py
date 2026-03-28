@@ -7,19 +7,21 @@ import re
 # ===== 基本設定 =====
 st.set_page_config(page_title="PTT 智能搜尋器 Pro", page_icon="🔍", layout="wide")
 
-# ===== session 初始化 =====
+# ===== Session 初始化 =====
 for key in ["ptt", "news", "law", "searched", "keyword"]:
     if key not in st.session_state:
         st.session_state[key] = [] if key not in ["searched", "keyword"] else False
 
 # ===== 高亮關鍵字 =====
 def highlight(text, keyword):
+    if not text:
+        return ""
     return re.sub(f"({re.escape(keyword)})",
                   r"<span style='color:#ffea00;font-weight:bold'>\1</span>",
                   text,
                   flags=re.IGNORECASE)
 
-# ===== PTT 搜尋 =====
+# ===== PTT 官方搜尋 =====
 def fetch_ptt_official_search(keyword, board="Gossiping", limit=10):
     PTT_URL = "https://www.ptt.cc"
     SEARCH_URL = f"{PTT_URL}/bbs/{board}/SearchResult.jsp"
@@ -30,37 +32,35 @@ def fetch_ptt_official_search(keyword, board="Gossiping", limit=10):
     start = 0
 
     while len(articles) < limit:
-        payload = {
-            "keyword": keyword,
-            "searchtype": "title",
-            "start": str(start)
-        }
-        res = requests.post(SEARCH_URL, data=payload, headers=headers, cookies=cookies, timeout=5)
-        soup = BeautifulSoup(res.text, "html.parser")
-        entries = soup.select(".r-ent .title a")
-
-        if not entries:
-            break
-
-        for a in entries:
-            title = a.text.strip()
-            link = PTT_URL + a["href"]
-            articles.append({"title": title, "link": link})
-            if len(articles) >= limit:
+        try:
+            payload = {"keyword": keyword, "searchtype": "title", "start": str(start)}
+            res = requests.post(SEARCH_URL, data=payload, headers=headers, cookies=cookies, timeout=5)
+            soup = BeautifulSoup(res.text, "html.parser")
+            entries = soup.select(".r-ent .title a")
+            if not entries:
                 break
-
-        start += 20  # PTT 搜尋每頁約 20 筆
-
+            for a in entries:
+                title = a.text.strip()
+                link = PTT_URL + a["href"]
+                articles.append({"title": title, "link": link})
+                if len(articles) >= limit:
+                    break
+            start += 20
+        except Exception as e:
+            st.warning(f"PTT 搜尋遇到問題: {e}")
+            break
     return articles
-
 
 # ===== 自由時報新聞搜尋（RSS） =====
 def fetch_news(keyword, limit=10):
     RSS_URL = "https://news.ltn.com.tw/rss/all.xml"
-    feed = feedparser.parse(RSS_URL)
+    try:
+        feed = feedparser.parse(RSS_URL)
+    except Exception:
+        return []
     articles = []
     for entry in feed.entries:
-        title = entry.title
+        title = BeautifulSoup(entry.title, "html.parser").text
         link = entry.link
         if keyword.lower() in title.lower():
             articles.append({"title": title, "link": link})
@@ -68,25 +68,21 @@ def fetch_news(keyword, limit=10):
             break
     return articles
 
-# ===== 全國法規資料庫搜尋（標題匹配） =====
+# ===== 全國法規資料庫搜尋 =====
 def fetch_laws(keyword, limit=10):
-    BASE_URL = "https://law.moj.gov.tw/LawClass/LawSearch?query="
-    url = BASE_URL + keyword
+    BASE_URL = "https://law.moj.gov.tw/LawClass/LawSearch?query=" + keyword
     headers = {"User-Agent": "Mozilla/5.0"}
     articles = []
-
     try:
-        res = requests.get(url, headers=headers, timeout=5, verify=False)
-    except:
-        return articles
-
-    soup = BeautifulSoup(res.text, "html.parser")
-    items = soup.select(".search_result_title a")
-    for a in items[:limit]:
-        title = a.text.strip()
-        link = "https://law.moj.gov.tw" + a["href"]
-        articles.append({"title": title, "link": link})
-
+        res = requests.get(BASE_URL, headers=headers, timeout=5, verify=False)
+        soup = BeautifulSoup(res.text, "html.parser")
+        items = soup.select(".search_result_title a")
+        for a in items[:limit]:
+            title = a.text.strip()
+            link = "https://law.moj.gov.tw" + a["href"]
+            articles.append({"title": title, "link": link})
+    except Exception:
+        pass
     return articles
 
 # ===== AI 摘要（簡化版） =====
@@ -107,7 +103,7 @@ with col2:
 
 if st.button("開始搜尋 🔍") and keyword:
     with st.spinner("搜尋中..."):
-        st.session_state.ptt = fetch_ptt_articles(keyword, limit)
+        st.session_state.ptt = fetch_ptt_official_search(keyword, limit)
         st.session_state.news = fetch_news(keyword, limit)
         st.session_state.law = fetch_laws(keyword, limit)
         st.session_state.keyword = keyword
@@ -128,8 +124,10 @@ if st.session_state.searched:
     st.markdown("### 🧠 AI 摘要")
     st.write(fake_summary(data))
 
+    # 分頁顯示
     page_size = 5
-    page = st.number_input("頁數", min_value=1, max_value=max(1, (len(data)-1)//page_size + 1), step=1)
+    total_pages = max(1, (len(data)-1)//page_size + 1)
+    page = st.number_input("頁數", min_value=1, max_value=total_pages, step=1)
     start = (page - 1) * page_size
     end = start + page_size
 
