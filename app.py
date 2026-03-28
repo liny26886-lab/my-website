@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import re
 
 # ===== Streamlit 頁面設定 =====
 st.set_page_config(page_title="PTT 智能搜尋器", page_icon="🔍", layout="wide")
@@ -19,71 +20,76 @@ def fetch_ptt_articles(keyword="ai", limit=10):
     while len(articles) < limit and url and page_count < max_pages:
         try:
             res = requests.get(url, headers=headers, cookies=cookies, timeout=5)
-        except:
+            soup = BeautifulSoup(res.text, "html.parser")
+            entries = soup.select(".r-ent")
+
+            for entry in entries:
+                title_tag = entry.select_one(".title a")
+                if not title_tag:
+                    continue
+                title = title_tag.text.strip()
+                link = PTT_URL + title_tag["href"]
+                if keyword.lower() in title.lower():
+                    articles.append({"title": title, "link": link})
+                if len(articles) >= limit:
+                    break
+
+            # 下一頁按鈕
+            btn_prev = soup.select_one(".btn-group-paging a:contains('上頁')")
+            if btn_prev and "href" in btn_prev.attrs:
+                url = PTT_URL + btn_prev["href"]
+            else:
+                url = None
+
+            page_count += 1
+        except Exception as e:
+            print(f"抓 PTT 錯誤: {e}")
             break
-
-        soup = BeautifulSoup(res.text, "html.parser")
-        entries = soup.select(".r-ent")
-
-        for entry in entries:
-            title_tag = entry.select_one(".title a")
-            if not title_tag:
-                continue
-
-            title = title_tag.text.strip()
-            link = PTT_URL + title_tag["href"]
-
-            if keyword.lower() in title.lower():
-                articles.append({"title": title, "link": link})
-
-            if len(articles) >= limit:
-                break
-
-        # 下一頁按鈕
-        btn_prev = soup.select_one(".btn-group-paging a:contains('上頁')")
-        if btn_prev and "href" in btn_prev.attrs:
-            url = PTT_URL + btn_prev["href"]
-        else:
-            url = None
-        page_count += 1
 
     return articles
 
 def fetch_news(keyword, limit=10):
     url = "https://news.ltn.com.tw/list/breakingnews"
     headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers)
-    soup = BeautifulSoup(res.text, "html.parser")
     articles = []
-    for entry in soup.select(".whitecon h3 a")[:limit]:
-        if keyword.lower() in entry.text.lower():
-            articles.append({"title": entry.text.strip(), "link": entry["href"]})
+
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(res.text, "html.parser")
+        entries = soup.select(".whitecon h3 a")
+        for entry in entries:
+            title = entry.text.strip()
+            link = entry["href"]
+            if keyword.lower() in title.lower():
+                articles.append({"title": title, "link": link})
+            if len(articles) >= limit:
+                break
+    except Exception as e:
+        print(f"抓新聞錯誤: {e}")
+
     return articles
 
 def fetch_laws(keyword, limit=10):
-    import requests
-    from bs4 import BeautifulSoup
-
     url = f"https://law.moj.gov.tw/LawClass/LawSearch?query={keyword}"
     headers = {"User-Agent": "Mozilla/5.0"}
     articles = []
 
     try:
         res = requests.get(url, headers=headers, timeout=5, verify=False)
+        soup = BeautifulSoup(res.text, "html.parser")
+        entries = soup.select(".search_result_title a")
+        for entry in entries:
+            articles.append({"title": entry.text.strip(), "link": "https://law.moj.gov.tw" + entry["href"]})
+            if len(articles) >= limit:
+                break
     except Exception as e:
-        print(f"Error fetching law site: {e}")
-        return articles
-
-    soup = BeautifulSoup(res.text, "html.parser")
-    for entry in soup.select(".search_result_title a")[:limit]:
-        articles.append({"title": entry.text.strip(), "link": "https://law.moj.gov.tw" + entry["href"]})
-        if len(articles) >= limit:
-            break
+        print(f"抓法規錯誤: {e}")
 
     return articles[:limit]
+
 def highlight(text, keyword):
-    """高亮關鍵字"""
-    return text.replace(keyword, f"<span style='color:#ffea00;font-weight:bold'>{keyword}</span>")
+    """大小寫不敏感高亮"""
+    return re.sub(f"({re.escape(keyword)})", r"<span style='color:#ffea00;font-weight:bold'>\1</span>", text, flags=re.IGNORECASE)
 
 # ===== 主畫面 =====
 st.title("🔍 PTT 智能搜尋器（作品集版）")
