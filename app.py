@@ -40,8 +40,11 @@ def fetch_ptt_articles(keyword="ai", limit=10):
                 break
 
         # 下一頁按鈕
-        btn = soup.select_one(".btn-group-paging a:nth-child(2)")  
-        url = PTT_URL + btn["href"] if btn else None
+        btn_prev = soup.select_one(".btn-group-paging a:contains('上頁')")
+        if btn_prev and "href" in btn_prev.attrs:
+            url = PTT_URL + btn_prev["href"]
+        else:
+            url = None
         page_count += 1
 
     return articles
@@ -58,17 +61,26 @@ def fetch_news(keyword, limit=10):
     return articles
 
 def fetch_laws(keyword, limit=10):
+    import requests
+    from bs4 import BeautifulSoup
+
     url = f"https://law.moj.gov.tw/LawClass/LawSearch?query={keyword}"
     headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers)
-    soup = BeautifulSoup(res.text, "html.parser")
     articles = []
+
+    try:
+        res = requests.get(url, headers=headers, timeout=5, verify=False)
+    except Exception as e:
+        print(f"Error fetching law site: {e}")
+        return articles
+
+    soup = BeautifulSoup(res.text, "html.parser")
     for entry in soup.select(".search_result_title a")[:limit]:
         articles.append({"title": entry.text.strip(), "link": "https://law.moj.gov.tw" + entry["href"]})
         if len(articles) >= limit:
             break
-    return articles[:limit]
 
+    return articles[:limit]
 def highlight(text, keyword):
     """高亮關鍵字"""
     return text.replace(keyword, f"<span style='color:#ffea00;font-weight:bold'>{keyword}</span>")
