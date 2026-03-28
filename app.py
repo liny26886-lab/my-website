@@ -40,7 +40,7 @@ def fetch_ptt_articles(keyword="ai", limit=10):
                 break
 
         # 下一頁按鈕
-        btn = soup.select_one(".btn-group-paging a:nth-child(3)")  # 3 = 下一頁
+        btn = soup.select_one(".btn-group-paging a:nth-child(2)")  
         url = PTT_URL + btn["href"] if btn else None
         page_count += 1
 
