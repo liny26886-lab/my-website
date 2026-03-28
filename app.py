@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import feedparser
 import re
 
 # ===== 基本設定 =====
@@ -34,7 +35,6 @@ def fetch_ptt_articles(keyword, limit=10):
             res = requests.get(url, headers=headers, cookies=cookies, timeout=5)
         except:
             break
-
         soup = BeautifulSoup(res.text, "html.parser")
         entries = soup.select(".r-ent")
         for entry in entries:
@@ -52,48 +52,31 @@ def fetch_ptt_articles(keyword, limit=10):
         url = PTT_URL + btn_prev["href"] if btn_prev else None
         page_count += 1
 
-    return articles[:limit]
+    return articles
 
-# ===== 自由時報新聞搜尋（逐頁） =====
+# ===== 自由時報新聞搜尋（RSS） =====
 def fetch_news(keyword, limit=10):
-    BASE_URL = "https://news.ltn.com.tw"
-    url = f"{BASE_URL}/search?keyword={keyword}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-
+    RSS_URL = "https://news.ltn.com.tw/rss/all.xml"
+    feed = feedparser.parse(RSS_URL)
     articles = []
-    page = 1
-    max_pages = 5
-
-    while len(articles) < limit and page <= max_pages:
-        try:
-            res = requests.get(f"{url}&page={page}", headers=headers, timeout=5)
-        except:
+    for entry in feed.entries:
+        title = entry.title
+        link = entry.link
+        if keyword.lower() in title.lower():
+            articles.append({"title": title, "link": link})
+        if len(articles) >= limit:
             break
+    return articles
 
-        soup = BeautifulSoup(res.text, "html.parser")
-        items = soup.select(".searchlist .tit a")
-        if not items:
-            break
-
-        for a in items:
-            title = a.text.strip()
-            link = a["href"]
-            if keyword.lower() in title.lower():
-                articles.append({"title": title, "link": link})
-            if len(articles) >= limit:
-                break
-        page += 1
-
-    return articles[:limit]
-
-# ===== 法規搜尋（全國法規資料庫） =====
+# ===== 全國法規資料庫搜尋（標題匹配） =====
 def fetch_laws(keyword, limit=10):
-    url = "https://mojlaw.moj.gov.tw/LawClass/LawSearch.aspx"
+    BASE_URL = "https://law.moj.gov.tw/LawClass/LawSearch?query="
+    url = BASE_URL + keyword
     headers = {"User-Agent": "Mozilla/5.0"}
     articles = []
 
     try:
-        res = requests.get(url, headers=headers, params={"query": keyword}, timeout=5)
+        res = requests.get(url, headers=headers, timeout=5, verify=False)
     except:
         return articles
 
@@ -101,11 +84,10 @@ def fetch_laws(keyword, limit=10):
     items = soup.select(".search_result_title a")
     for a in items[:limit]:
         title = a.text.strip()
-        link = "https://mojlaw.moj.gov.tw" + a["href"]
-        if keyword.lower() in title.lower():
-            articles.append({"title": title, "link": link})
+        link = "https://law.moj.gov.tw" + a["href"]
+        articles.append({"title": title, "link": link})
 
-    return articles[:limit]
+    return articles
 
 # ===== AI 摘要（簡化版） =====
 def fake_summary(data):
