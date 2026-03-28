@@ -17,7 +17,11 @@ if "searched" not in st.session_state:
 if "keyword" not in st.session_state:
     st.session_state.keyword = ""
 
-# ===== 高亮關鍵字 =====
+# ===== 關鍵字處理 =====
+def get_keywords(keyword):
+    return [k for k in re.split(r"\s+", keyword) if k]
+
+# ===== 高亮 =====
 def highlight(text, keyword):
     if not text or not keyword:
         return text
@@ -31,21 +35,43 @@ def highlight(text, keyword):
     except:
         return text
 
-# ===== 計算文章相關度 =====
-def compute_relevance(text, keywords):
-    return sum(text.lower().count(k.lower()) for k in keywords)
+# ===== 🔥 核心評分系統 =====
+def compute_score(text, keywords):
+    text_lower = text.lower()
+    score = 0
 
-# ===== PTT 搜尋 =====
-def fetch_ptt(keyword, board="Gossiping", limit=5, max_pages=5):
+    for kw in keywords:
+        kw_lower = kw.lower()
+
+        # 完整匹配
+        if kw_lower in text_lower:
+            score += 5
+
+        # 子字串
+        for i in range(len(kw_lower)):
+            for j in range(i+2, len(kw_lower)+1):
+                sub = kw_lower[i:j]
+                if sub in text_lower:
+                    score += 2
+
+        # 單字匹配
+        for char in kw_lower:
+            if char in text_lower:
+                score += 1
+
+    return score
+
+# ===== PTT =====
+def fetch_ptt(keyword, board="Gossiping", limit=10, max_pages=5):
     PTT_URL = "https://www.ptt.cc"
     cookies = {"over18": "1"}
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    keywords = re.split(r"\s+", keyword)
+    keywords = get_keywords(keyword)
     articles = []
 
     try:
-        res = requests.get(f"{PTT_URL}/bbs/{board}/index.html", headers=headers, cookies=cookies, timeout=5)
+        res = requests.get(f"{PTT_URL}/bbs/{board}/index.html", headers=headers, cookies=cookies)
         soup = BeautifulSoup(res.text, "html.parser")
 
         btn = soup.select("a.btn.wide")
@@ -64,15 +90,16 @@ def fetch_ptt(keyword, board="Gossiping", limit=5, max_pages=5):
             break
         try:
             res = requests.get(f"{PTT_URL}/bbs/{board}/index{page_num}.html",
-                               headers=headers, cookies=cookies, timeout=5)
+                               headers=headers, cookies=cookies)
             soup = BeautifulSoup(res.text, "html.parser")
 
             for a in soup.select(".r-ent .title a"):
                 title = a.text.strip()
                 link = PTT_URL + a["href"]
 
-                score = sum(1 for kw in keywords if kw.lower() in title.lower())
-                if score > 0:
+                score = compute_score(title, keywords)
+
+                if score >= 2:   # 🔥 過濾低品質
                     articles.append({
                         "title": title,
                         "link": link,
@@ -81,10 +108,10 @@ def fetch_ptt(keyword, board="Gossiping", limit=5, max_pages=5):
         except:
             continue
 
-    articles = sorted(articles, key=lambda x: x["score"], reverse=True)
+    articles.sort(key=lambda x: x["score"], reverse=True)
     return articles[:limit]
 
-# ===== 新聞搜尋 =====
+# ===== 新聞 =====
 def fetch_news(keyword, limit=10):
     RSS_URL = "https://news.ltn.com.tw/rss/all.xml"
     articles = []
@@ -94,32 +121,26 @@ def fetch_news(keyword, limit=10):
     except:
         return []
 
-    keywords_list = keyword.split()
+    keywords = get_keywords(keyword)
 
     for entry in feed.entries:
         title = BeautifulSoup(entry.title, "html.parser").text
         link = entry.link
 
-        relevance = compute_relevance(title, keywords_list)
-        if relevance > 0:
+        score = compute_score(title, keywords)
+
+        if score >= 2:
             articles.append({
                 "title": title,
                 "link": link,
-                "relevance": relevance
+                "score": score
             })
 
-    articles.sort(key=lambda x: x["relevance"], reverse=True)
+    articles.sort(key=lambda x: x["score"], reverse=True)
     return articles[:limit]
-
-# ===== AI 摘要 =====
-def fake_summary(data, keyword):
-    if not data:
-        return "沒有資料可以分析"
-    return f"共找到 {len(data)} 筆資料，主要內容與「{keyword}」相關。"
 
 # ===== UI =====
 st.title("🔍 智能搜尋器 Pro")
-st.markdown("### 🚀 PTT / 自由時報新聞 一站式搜尋")
 
 col1, col2 = st.columns([3,1])
 with col1:
@@ -129,32 +150,24 @@ with col2:
 
 if st.button("開始搜尋 🔍") and keyword:
     with st.spinner("搜尋中..."):
-        st.session_state.ptt = fetch_ptt(keyword, limit=limit)  # ✅ 修正這裡
+        st.session_state.ptt = fetch_ptt(keyword, limit=limit)
         st.session_state.news = fetch_news(keyword, limit)
         st.session_state.keyword = keyword
         st.session_state.searched = True
 
 if st.session_state.searched:
-    st.success(f"搜尋關鍵字：{st.session_state.keyword}")
     source = st.radio("資料來源", ["PTT", "新聞"])
-
     data = st.session_state.ptt if source == "PTT" else st.session_state.news
 
-    st.info(f"共找到 {len(data)} 筆資料")
-    st.markdown("### 🧠 AI 摘要")
-    st.write(fake_summary(data, st.session_state.keyword))
+    st.write(f"共 {len(data)} 筆結果")
 
-    for article in data[:5]:
+    for article in data:
         title = highlight(article["title"], st.session_state.keyword)
 
         st.markdown(f"""
-        <div style="
-            background:#1e1e1e;
-            padding:15px;
-            border-radius:12px;
-            margin-bottom:10px;
-        ">
+        <div style="background:#1e1e1e;padding:15px;border-radius:10px;margin-bottom:10px;">
             <h4 style="color:white;">{title}</h4>
-            <a href="{article['link']}" target="_blank" style="color:#4da6ff;">查看文章 →</a>
+            <p style="color:gray;">相關度：{article['score']}</p>
+            <a href="{article['link']}" target="_blank">查看文章</a>
         </div>
         """, unsafe_allow_html=True)
