@@ -1,16 +1,14 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-from functools import lru_cache
 
-# ===== 基本設定 =====
-st.set_page_config(page_title="PTT 搜尋器", page_icon="🔍", layout="wide")
+# ===== Streamlit 頁面設定 =====
+st.set_page_config(page_title="PTT 智能搜尋器", page_icon="🔍", layout="wide")
 PTT_URL = "https://www.ptt.cc"
 
-# ===== 爬蟲 + Cache =====
-@st.cache_data(show_spinner=False)
-def fetch_ptt_articles(board="Gossiping", keyword="ai", limit=10):
-    url = f"{PTT_URL}/bbs/{board}/index.html"
+# ===== 函式區 =====
+def fetch_ptt_articles(keyword="ai", limit=10):
+    url = f"{PTT_URL}/bbs/Gossiping/index.html"
     headers = {"User-Agent": "Mozilla/5.0"}
     cookies = {'over18': '1'}
 
@@ -41,35 +39,43 @@ def fetch_ptt_articles(board="Gossiping", keyword="ai", limit=10):
             if len(articles) >= limit:
                 break
 
-        btn = soup.select_one(".btn-group-paging a:nth-child(2)")
+        # 下一頁按鈕
+        btn = soup.select_one(".btn-group-paging a:nth-child(3)")  # 3 = 下一頁
         url = PTT_URL + btn["href"] if btn else None
         page_count += 1
 
     return articles
 
-# ===== UI =====
-def highlight(text, keyword):
-    return text.replace(keyword, f"**{keyword}**")
+def fetch_news(keyword, limit=10):
+    url = "https://news.ltn.com.tw/list/breakingnews"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    res = requests.get(url, headers=headers)
+    soup = BeautifulSoup(res.text, "html.parser")
+    articles = []
+    for entry in soup.select(".whitecon h3 a")[:limit]:
+        if keyword.lower() in entry.text.lower():
+            articles.append({"title": entry.text.strip(), "link": entry["href"]})
+    return articles
 
-def show_card(title, link, keyword):
-    st.markdown(f"""
-    <div style="
-        background-color:#1e1e1e;
-        padding:15px;
-        border-radius:12px;
-        margin-bottom:10px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-    ">
-        <h4 style="color:white;">{highlight(title, keyword)}</h4>
-        <a href="{link}" target="_blank" style="color:#4da6ff;">
-            點我查看文章 →
-        </a>
-    </div>
-    """, unsafe_allow_html=True)
+def fetch_laws(keyword, limit=10):
+    url = f"https://law.moj.gov.tw/LawClass/LawSearch?query={keyword}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    res = requests.get(url, headers=headers)
+    soup = BeautifulSoup(res.text, "html.parser")
+    articles = []
+    for entry in soup.select(".search_result_title a")[:limit]:
+        articles.append({"title": entry.text.strip(), "link": "https://law.moj.gov.tw" + entry["href"]})
+        if len(articles) >= limit:
+            break
+    return articles[:limit]
+
+def highlight(text, keyword):
+    """高亮關鍵字"""
+    return text.replace(keyword, f"<span style='color:#ffea00;font-weight:bold'>{keyword}</span>")
 
 # ===== 主畫面 =====
 st.title("🔍 PTT 智能搜尋器（作品集版）")
-st.markdown("### 🚀 快速搜尋 PTT 熱門討論")
+st.markdown("### 🚀 快速搜尋 PTT / 新聞 / 法規")
 
 col1, col2 = st.columns([3,1])
 with col1:
@@ -77,18 +83,40 @@ with col1:
 with col2:
     limit = st.selectbox("筆數", [5, 10, 20])
 
-if st.button("開始搜尋 🔍"):
-    if not keyword:
-        st.warning("請輸入關鍵字！")
+if st.button("開始搜尋 🔍") and keyword:
+    with st.spinner("抓取資料中..."):
+        ptt_results = fetch_ptt_articles(keyword=keyword, limit=limit)
+        news_results = fetch_news(keyword=keyword, limit=limit)
+        law_results = fetch_laws(keyword=keyword, limit=limit)
+
+    st.success("✅ 搜尋完成！")
+
+    # 選擇資料來源
+    source = st.radio("選擇資料來源", ["PTT", "新聞", "法規"])
+    
+    if source == "PTT":
+        data = ptt_results
+    elif source == "新聞":
+        data = news_results
     else:
-        with st.spinner("🔎 搜尋中，請稍候..."):
-            results = fetch_ptt_articles(keyword=keyword, limit=limit)
+        data = law_results
 
-        st.divider()
-
-        if not results:
-            st.error("❌ 找不到相關文章（可能被 PTT 擋了）")
-        else:
-            st.success(f"✅ 找到 {len(results)} 筆結果")
-            for article in results:
-                show_card(article["title"], article["link"], keyword)
+    if not data:
+        st.warning("沒有找到相關文章。")
+    else:
+        for article in data:
+            display_title = highlight(article['title'], keyword)
+            st.markdown(f"""
+            <div style="
+                background-color:#1e1e1e;
+                padding:15px;
+                border-radius:12px;
+                margin-bottom:10px;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            ">
+                <h4 style="color:white;">{display_title}</h4>
+                <a href="{article['link']}" target="_blank" style="color:#4da6ff;">
+                    點我查看文章 →
+                </a>
+            </div>
+            """, unsafe_allow_html=True)
