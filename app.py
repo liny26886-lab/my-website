@@ -20,39 +20,39 @@ def highlight(text, keyword):
                   flags=re.IGNORECASE)
 
 # ===== PTT 搜尋 =====
-def fetch_ptt_articles(keyword, limit=10):
+def fetch_ptt_official_search(keyword, board="Gossiping", limit=10):
     PTT_URL = "https://www.ptt.cc"
-    url = f"{PTT_URL}/bbs/Gossiping/index.html"
+    SEARCH_URL = f"{PTT_URL}/bbs/{board}/SearchResult.jsp"
     headers = {"User-Agent": "Mozilla/5.0"}
     cookies = {"over18": "1"}
 
     articles = []
-    page_count = 0
-    max_pages = 15
+    start = 0
 
-    while len(articles) < limit and url and page_count < max_pages:
-        try:
-            res = requests.get(url, headers=headers, cookies=cookies, timeout=5)
-        except:
-            break
+    while len(articles) < limit:
+        payload = {
+            "keyword": keyword,
+            "searchtype": "title",
+            "start": str(start)
+        }
+        res = requests.post(SEARCH_URL, data=payload, headers=headers, cookies=cookies, timeout=5)
         soup = BeautifulSoup(res.text, "html.parser")
-        entries = soup.select(".r-ent")
-        for entry in entries:
-            title_tag = entry.select_one(".title a")
-            if not title_tag:
-                continue
-            title = title_tag.text.strip()
-            link = PTT_URL + title_tag["href"]
-            if keyword.lower() in title.lower():
-                articles.append({"title": title, "link": link})
+        entries = soup.select(".r-ent .title a")
+
+        if not entries:
+            break
+
+        for a in entries:
+            title = a.text.strip()
+            link = PTT_URL + a["href"]
+            articles.append({"title": title, "link": link})
             if len(articles) >= limit:
                 break
 
-        btn_prev = soup.select_one(".btn-group-paging a:nth-child(2)")
-        url = PTT_URL + btn_prev["href"] if btn_prev else None
-        page_count += 1
+        start += 20  # PTT 搜尋每頁約 20 筆
 
     return articles
+
 
 # ===== 自由時報新聞搜尋（RSS） =====
 def fetch_news(keyword, limit=10):
