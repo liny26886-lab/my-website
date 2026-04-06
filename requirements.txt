@@ -2,3 +2,6 @@ streamlit==1.55.0
 requests
 beautifulsoup4
 feedparser
+sentence-transformers
+torch
+scikit-learn
