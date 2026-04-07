@@ -10,7 +10,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 
 # =========================
-# 1️⃣ 載入 MiniLM-L3 ONNX 模型
+# 1️⃣ 懶載入 ONNX 模型
 # =========================
 @st.cache_resource
 def load_onnx_model():
@@ -19,21 +19,32 @@ def load_onnx_model():
     session = onnxruntime.InferenceSession("MiniLM-L3-onnx/model.onnx")
     return tokenizer, session
 
-tokenizer, session = load_onnx_model()
-
-# 將文字編碼成向量
-def encode_onnx(texts):
-    if isinstance(texts, str):
-        texts = [texts]
-    inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="np")
-    # ✅ 只保留 ONNX 模型需要的欄位
-    allowed_keys = {inp.name for inp in session.get_inputs()}
-    ort_inputs = {k: v for k, v in inputs.items() if k in allowed_keys}
-    ort_outs = session.run(None, ort_inputs)
-    return ort_outs[0]  # numpy array
+# 先不要載入模型，按需載入
+model_loaded = False
+tokenizer, session = None, None
 
 # =========================
-# 2️⃣ Session 初始化
+# 2️⃣ 將文字編碼成向量（批次處理）
+# =========================
+def encode_onnx(texts, batch_size=5):
+    global tokenizer, session, model_loaded
+    if not model_loaded:
+        tokenizer, session = load_onnx_model()
+        model_loaded = True
+    if isinstance(texts, str):
+        texts = [texts]
+    embeddings_list = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i+batch_size]
+        inputs = tokenizer(batch, padding=True, truncation=True, return_tensors="np")
+        allowed_keys = {inp.name for inp in session.get_inputs()}
+        ort_inputs = {k: v for k, v in inputs.items() if k in allowed_keys}
+        ort_outs = session.run(None, ort_inputs)
+        embeddings_list.extend(ort_outs[0])
+    return np.array(embeddings_list)
+
+# =========================
+# 3️⃣ Session 初始化
 # =========================
 if "data" not in st.session_state:
     st.session_state.data = []
@@ -43,7 +54,7 @@ if "keyword" not in st.session_state:
     st.session_state.keyword = ""
 
 # =========================
-# 3️⃣ 工具函數
+# 4️⃣ 工具函數
 # =========================
 def get_keywords(keyword):
     return [k for k in re.split(r"\s+", keyword) if k]
@@ -98,7 +109,7 @@ def compute_score(text, keywords):
     return sem * 0.7 + key * 0.3
 
 # =========================
-# 4️⃣ PTT 搜尋
+# 5️⃣ PTT 搜尋
 # =========================
 def fetch_ptt(keyword, limit=10, max_pages=20):
     PTT_URL = "https://www.ptt.cc"
@@ -141,7 +152,7 @@ def fetch_ptt(keyword, limit=10, max_pages=20):
     return articles[:limit]
 
 # =========================
-# 5️⃣ 新聞 RSS 搜尋
+# 6️⃣ 新聞 RSS 搜尋
 # =========================
 def fetch_news(keyword, limit=10):
     RSS_URL = "https://news.ltn.com.tw/rss/all.xml"
@@ -163,7 +174,7 @@ def fetch_news(keyword, limit=10):
     return articles[:limit]
 
 # =========================
-# 6️⃣ UI
+# 7️⃣ UI
 # =========================
 st.title("🔍 智能搜尋器 Pro")
 
