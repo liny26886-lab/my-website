@@ -11,7 +11,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 
 # =========================
-# 1️⃣ Render Port 安全設定
+# 1️⃣ Render Port 設定
 # =========================
 port = int(os.environ.get("PORT", 8501))
 st.set_page_config(page_title="智能搜尋器 Pro", layout="wide")
@@ -19,10 +19,6 @@ st.set_page_config(page_title="智能搜尋器 Pro", layout="wide")
 # =========================
 # 2️⃣ Session 初始化
 # =========================
-if "model_loaded" not in st.session_state:
-    st.session_state.model_loaded = False
-if "model" not in st.session_state:
-    st.session_state.model = None
 if "data" not in st.session_state:
     st.session_state.data = []
 if "searched" not in st.session_state:
@@ -82,29 +78,13 @@ def compute_score(text, keywords):
     return sem * 0.7 + key * 0.3
 
 # =========================
-# 4️⃣ 模型載入 + 進度回報
+# 4️⃣ 模型初始化（只跑一次）
 # =========================
-def load_model_with_progress(overall_progress):
-    model_dict = {}
-
-    # Step 1: 初始化 tokenizer
-    overall_progress.text("Step 1/3: 初始化 tokenizer …")
-    time.sleep(1)
-    model_dict['tokenizer'] = SentenceTransformer('paraphrase-MiniLM-L3-v2').tokenizer
-    overall_progress.progress(10)
-
-    # Step 2: 初始化 ONNX session
-    overall_progress.text("Step 2/3: 初始化 ONNX session …")
-    time.sleep(1)
-    model_dict['session'] = onnxruntime.InferenceSession("MiniLM-L3-onnx/model.onnx")
-    overall_progress.progress(30)
-
-    # Step 3: 完成初始化
-    overall_progress.text("Step 3/3: 模型載入完成 ✅")
-    time.sleep(0.5)
-    overall_progress.progress(40)
-    st.success("模型成功載入 ✅")
-    return model_dict
+@st.cache_resource
+def load_model():
+    tokenizer = SentenceTransformer('paraphrase-MiniLM-L3-v2').tokenizer
+    session = onnxruntime.InferenceSession("model.onnx")
+    return {"tokenizer": tokenizer, "session": session}
 
 # =========================
 # 5️⃣ PTT 搜尋
@@ -116,7 +96,6 @@ def fetch_ptt(keyword, limit=10, max_pages=10, overall_progress=None):
     keywords = get_keywords(keyword)
     articles = []
 
-    # 先抓最新頁碼
     try:
         res = requests.get(f"{PTT_URL}/bbs/Gossiping/index.html", headers=headers, cookies=cookies, timeout=5)
         soup = BeautifulSoup(res.text, "html.parser")
@@ -136,7 +115,7 @@ def fetch_ptt(keyword, limit=10, max_pages=10, overall_progress=None):
             break
         if overall_progress:
             overall_progress.text(f"抓取 PTT 第 {i}/{max_pages} 頁 …")
-            overall_progress.progress(40 + int(i/max_pages*30))  # PTT占30%
+            overall_progress.progress(40 + int(i/max_pages*30))
         try:
             res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page_num}.html",
                                headers=headers, cookies=cookies, timeout=5)
@@ -168,7 +147,7 @@ def fetch_news(keyword, limit=10, overall_progress=None):
     for i, entry in enumerate(feed.entries, start=1):
         if overall_progress:
             overall_progress.text(f"抓取新聞 {i}/{total_entries} …")
-            overall_progress.progress(70 + int(i/total_entries*30))  # 新聞占30%
+            overall_progress.progress(70 + int(i/total_entries*30))
         title = BeautifulSoup(entry.title, "html.parser").text
         link = entry.link
         score = compute_score(title, keywords)
@@ -194,14 +173,14 @@ source = st.radio("資料來源", ["PTT", "新聞", "全部"])
 overall_progress = st.empty()
 progress_bar = st.progress(0)
 
-# 模型載入按鈕
-if not st.session_state.model_loaded:
-    if st.button("載入模型"):
-        st.session_state.model = load_model_with_progress(overall_progress)
-        st.session_state.model_loaded = True
+# 載入模型（按需初始化）
+if "model" not in st.session_state:
+    if st.button("初始化模型"):
+        st.session_state.model = load_model()
+        st.success("模型初始化完成 ✅")
 
 # 搜尋按鈕
-if st.session_state.model_loaded and st.button("開始搜尋 🔍") and keyword_input:
+if "model" in st.session_state and st.button("開始搜尋 🔍") and keyword_input:
     st.session_state.keyword = keyword_input
     st.session_state.data = []
     st.session_state.searched = True
