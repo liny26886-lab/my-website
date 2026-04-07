@@ -86,7 +86,6 @@ def compute_score(text, keywords):
 # 5️⃣ 模型載入（延遲 import）
 # =========================
 def load_model_with_progress(overall_progress):
-    def load_model_with_progress(overall_progress):
     import onnxruntime
     import json
     import numpy as np
@@ -98,7 +97,6 @@ def load_model_with_progress(overall_progress):
     time.sleep(0.2)
     with open("model/tokenizer.json", "r", encoding="utf-8") as f:
         tokenizer_config = json.load(f)
-    # 這裡直接存 tokenization 配置，不用 SentenceTransformer
     model_dict['tokenizer_config'] = tokenizer_config
     overall_progress.progress(10)
 
