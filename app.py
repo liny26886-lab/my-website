@@ -15,23 +15,14 @@ from sentence_transformers import SentenceTransformer
 # =========================
 @st.cache_resource
 def load_onnx_model():
-    st.info("正在載入 ONNX 模型，請稍候...")
     tokenizer = SentenceTransformer('paraphrase-MiniLM-L3-v2').tokenizer
     session = onnxruntime.InferenceSession("MiniLM-L3-onnx/model.onnx")
-    st.success("模型載入完成 ✅")
     return tokenizer, session
 
-model_loaded = False
-tokenizer, session = None, None
-
 # =========================
-# 2️⃣ 文字編碼函數（批次處理）
+# 2️⃣ 批次文字編碼
 # =========================
-def encode_onnx(texts, batch_size=5):
-    global tokenizer, session, model_loaded
-    if not model_loaded:
-        tokenizer, session = load_onnx_model()
-        model_loaded = True
+def encode_onnx(texts, tokenizer, session, batch_size=5):
     if isinstance(texts, str):
         texts = [texts]
     embeddings_list = []
@@ -53,6 +44,8 @@ if "searched" not in st.session_state:
     st.session_state.searched = False
 if "keyword" not in st.session_state:
     st.session_state.keyword = ""
+if "model" not in st.session_state:
+    st.session_state.model = None  # 之後存 (tokenizer, session)
 
 # =========================
 # 4️⃣ 工具函數
@@ -74,8 +67,9 @@ def highlight(text, keyword):
         return text
 
 def semantic_score(query, text):
-    q_vec = encode_onnx(query)
-    t_vec = encode_onnx(text)
+    tokenizer, session = st.session_state.model
+    q_vec = encode_onnx(query, tokenizer, session)
+    t_vec = encode_onnx(text, tokenizer, session)
     return float(cosine_similarity(q_vec, t_vec)[0][0])
 
 def keyword_score(text, keywords):
@@ -172,6 +166,9 @@ with col2:
 source = st.radio("資料來源", ["PTT", "新聞", "全部"])
 
 if st.button("開始搜尋 🔍") and keyword:
+    with st.spinner("載入模型中..."):
+        if st.session_state.model is None:
+            st.session_state.model = load_onnx_model()
     with st.spinner("搜尋 + AI分析中..."):
         data = []
         if source in ["PTT", "全部"]:
@@ -183,6 +180,7 @@ if st.button("開始搜尋 🔍") and keyword:
         st.session_state.keyword = keyword
         st.session_state.searched = True
 
+# 顯示結果
 if st.session_state.searched:
     if source == "PTT":
         show_data = [d for d in st.session_state.data if d["source"] == "PTT"]
@@ -205,6 +203,4 @@ if st.session_state.searched:
 # =========================
 # 8️⃣ Render Port 設定
 # =========================
-# Streamlit 會自動用 Render 提供的 $PORT
 port = int(os.environ.get("PORT", 8501))
-st.write(f"應用正在運行在 port {port}")
