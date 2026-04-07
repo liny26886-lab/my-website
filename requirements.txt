@@ -5,3 +5,4 @@ feedparser
 numpy
 scikit-learn
 onnxruntime
+transformers
