@@ -5,10 +5,8 @@ import feedparser
 import re
 import os
 import time
-import onnxruntime
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 
 # =========================
 # 1️⃣ Render Port 設定
@@ -19,6 +17,10 @@ st.set_page_config(page_title="智能搜尋器 Pro", layout="wide")
 # =========================
 # 2️⃣ Session 初始化
 # =========================
+if "model_loaded" not in st.session_state:
+    st.session_state.model_loaded = False
+if "model" not in st.session_state:
+    st.session_state.model = None
 if "data" not in st.session_state:
     st.session_state.data = []
 if "searched" not in st.session_state:
@@ -45,6 +47,9 @@ def highlight(text, keyword):
     except:
         return text
 
+# =========================
+# 4️⃣ ONNX 推理函數（依賴延遲 import）
+# =========================
 def encode_onnx(texts, tokenizer, session, batch_size=5):
     if isinstance(texts, str):
         texts = [texts]
@@ -78,18 +83,33 @@ def compute_score(text, keywords):
     return sem * 0.7 + key * 0.3
 
 # =========================
-# 4️⃣ 模型初始化（只跑一次）
+# 5️⃣ 模型載入（延遲 import）
 # =========================
-@st.cache_resource
-def load_model():
-    tokenizer = SentenceTransformer('paraphrase-MiniLM-L3-v2').tokenizer
-    session = onnxruntime.InferenceSession("model.onnx")
-    return {"tokenizer": tokenizer, "session": session}
+def load_model_with_progress(overall_progress):
+    import onnxruntime
+    from sentence_transformers import SentenceTransformer
+
+    model_dict = {}
+    overall_progress.text("Step 1/3: 初始化 tokenizer …")
+    time.sleep(0.2)
+    model_dict['tokenizer'] = SentenceTransformer('paraphrase-MiniLM-L3-v2').tokenizer
+    overall_progress.progress(10)
+
+    overall_progress.text("Step 2/3: 初始化 ONNX session …")
+    time.sleep(0.2)
+    model_dict['session'] = onnxruntime.InferenceSession("model.onnx")
+    overall_progress.progress(50)
+
+    overall_progress.text("Step 3/3: 模型載入完成 ✅")
+    time.sleep(0.2)
+    overall_progress.progress(100)
+    st.success("模型成功載入 ✅")
+    return model_dict
 
 # =========================
-# 5️⃣ PTT 搜尋
+# 6️⃣ PTT 搜尋
 # =========================
-def fetch_ptt(keyword, limit=10, max_pages=10, overall_progress=None):
+def fetch_ptt(keyword, limit=10, max_pages=5, overall_progress=None):
     PTT_URL = "https://www.ptt.cc"
     cookies = {"over18": "1"}
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -115,7 +135,7 @@ def fetch_ptt(keyword, limit=10, max_pages=10, overall_progress=None):
             break
         if overall_progress:
             overall_progress.text(f"抓取 PTT 第 {i}/{max_pages} 頁 …")
-            overall_progress.progress(40 + int(i/max_pages*30))
+            overall_progress.progress(10 + int(i/max_pages*30))
         try:
             res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page_num}.html",
                                headers=headers, cookies=cookies, timeout=5)
@@ -132,7 +152,7 @@ def fetch_ptt(keyword, limit=10, max_pages=10, overall_progress=None):
     return articles[:limit]
 
 # =========================
-# 6️⃣ 新聞 RSS 搜尋
+# 7️⃣ 新聞 RSS 搜尋
 # =========================
 def fetch_news(keyword, limit=10, overall_progress=None):
     RSS_URL = "https://news.ltn.com.tw/rss/all.xml"
@@ -147,7 +167,7 @@ def fetch_news(keyword, limit=10, overall_progress=None):
     for i, entry in enumerate(feed.entries, start=1):
         if overall_progress:
             overall_progress.text(f"抓取新聞 {i}/{total_entries} …")
-            overall_progress.progress(70 + int(i/total_entries*30))
+            overall_progress.progress(40 + int(i/total_entries*60))
         title = BeautifulSoup(entry.title, "html.parser").text
         link = entry.link
         score = compute_score(title, keywords)
@@ -157,7 +177,7 @@ def fetch_news(keyword, limit=10, overall_progress=None):
     return articles[:limit]
 
 # =========================
-# 7️⃣ UI
+# 8️⃣ UI
 # =========================
 st.title("🔍 智能搜尋器 Pro (含整體進度條)")
 
@@ -169,29 +189,31 @@ with col2:
 
 source = st.radio("資料來源", ["PTT", "新聞", "全部"])
 
-# 整體進度條
 overall_progress = st.empty()
 progress_bar = st.progress(0)
 
-# 載入模型（按需初始化）
-if "model" not in st.session_state:
-    if st.button("初始化模型"):
-        st.session_state.model = load_model()
-        st.success("模型初始化完成 ✅")
+# 模型載入按鈕（延遲 import）
+if not st.session_state.model_loaded:
+    if st.button("載入模型"):
+        with st.spinner("模型載入中，請稍候..."):
+            st.session_state.model = load_model_with_progress(overall_progress)
+            st.session_state.model_loaded = True
 
 # 搜尋按鈕
-if "model" in st.session_state and st.button("開始搜尋 🔍") and keyword_input:
+if st.session_state.model_loaded and st.button("開始搜尋 🔍") and keyword_input:
     st.session_state.keyword = keyword_input
     st.session_state.data = []
     st.session_state.searched = True
 
-    data = []
-    if source in ["PTT", "全部"]:
-        data += fetch_ptt(keyword_input, limit, overall_progress=overall_progress)
-    if source in ["新聞", "全部"]:
-        data += fetch_news(keyword_input, limit, overall_progress=overall_progress)
-    data.sort(key=lambda x: x["score"], reverse=True)
-    st.session_state.data = data
+    with st.spinner("資料抓取中，請稍候..."):
+        data = []
+        if source in ["PTT", "全部"]:
+            data += fetch_ptt(keyword_input, limit, overall_progress=overall_progress)
+        if source in ["新聞", "全部"]:
+            data += fetch_news(keyword_input, limit, overall_progress=overall_progress)
+        data.sort(key=lambda x: x["score"], reverse=True)
+        st.session_state.data = data
+
     overall_progress.text("全部抓取完成 ✅")
     progress_bar.progress(100)
     st.success("所有資料抓取完成 ✅")
