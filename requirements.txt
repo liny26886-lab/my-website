@@ -1,7 +1,9 @@
-streamlit==1.55.0
+streamlit>=1.21.0
 requests
 beautifulsoup4
 feedparser
-sentence-transformers
-torch
+sentence-transformers>=2.2.2
+torch>=2.0
 scikit-learn
+onnxruntime
+numpy

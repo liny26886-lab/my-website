@@ -3,25 +3,51 @@ import requests
 from bs4 import BeautifulSoup
 import feedparser
 import re
-from sentence_transformers import SentenceTransformer, util
+import onnxruntime
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-# ===== 1️⃣ 載入語意模型 =====
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+
+# =========================
+# 1️⃣ 載入 MiniLM-L3 ONNX 模型
+# =========================
 @st.cache_resource
-def load_model():
-    return SentenceTransformer('all-MiniLM-L6-v2')
-model = load_model()
-# ===== 2️⃣ Session 初始化 =====
+def load_onnx_model():
+    # Tokenizer 用原本 SentenceTransformer 的
+    tokenizer = SentenceTransformer('paraphrase-MiniLM-L3-v2').tokenizer
+    session = onnxruntime.InferenceSession("MiniLM-L3-onnx/model.onnx")
+    return tokenizer, session
+
+tokenizer, session = load_onnx_model()
+
+# 將文字編碼成向量
+def encode_onnx(texts):
+    if isinstance(texts, str):
+        texts = [texts]
+    inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="np")
+    # ✅ 只保留 ONNX 模型需要的欄位
+    allowed_keys = {inp.name for inp in session.get_inputs()}
+    ort_inputs = {k: v for k, v in inputs.items() if k in allowed_keys}
+    ort_outs = session.run(None, ort_inputs)
+    return ort_outs[0]  # numpy array
+
+# =========================
+# 2️⃣ Session 初始化
+# =========================
 if "data" not in st.session_state:
-    st.session_state.data = []           # 存搜尋結果
+    st.session_state.data = []
 if "searched" not in st.session_state:
-    st.session_state.searched = False    # 是否已搜尋
+    st.session_state.searched = False
 if "keyword" not in st.session_state:
-    st.session_state.keyword = ""        # 記錄搜尋字
-# ===== 3️⃣ 工具函數 =====
-# 拆關鍵字
+    st.session_state.keyword = ""
+
+# =========================
+# 3️⃣ 工具函數
+# =========================
 def get_keywords(keyword):
     return [k for k in re.split(r"\s+", keyword) if k]
-# 高亮文字
+
 def highlight(text, keyword):
     if not text or not keyword:
         return text
@@ -34,11 +60,12 @@ def highlight(text, keyword):
         )
     except:
         return text
-# 語意分數
-def semantic_score(query_emb, text):
-    text_emb = model.encode(text)
-    return float(util.cos_sim(query_emb, text_emb))
-# 關鍵字分數
+
+def semantic_score(query, text):
+    q_vec = encode_onnx(query)
+    t_vec = encode_onnx(text)
+    return float(cosine_similarity(q_vec, t_vec)[0][0])
+
 def keyword_score(text, keywords):
     text = text.lower()
     score = 0
@@ -46,10 +73,10 @@ def keyword_score(text, keywords):
         if kw.lower() in text:
             score += 3
     return score
-# 免費摘要 (TF-IDF)
+
 def extract_summary(text, n=2):
     sentences = re.split(r'[。！？]', text)
-    sentences = [s for s in sentences if len(s.strip()) > 5]  # 避免空句
+    sentences = [s for s in sentences if len(s.strip()) > 5]
     if len(sentences) <= n:
         return text
     try:
@@ -64,14 +91,22 @@ def extract_summary(text, n=2):
         return summary
     except:
         return text[:100]
-# ===== 4️⃣ PTT 搜尋 =====
+
+def compute_score(text, keywords):
+    sem = semantic_score(st.session_state.keyword, text)
+    key = keyword_score(text, keywords)
+    return sem * 0.7 + key * 0.3
+
+# =========================
+# 4️⃣ PTT 搜尋
+# =========================
 def fetch_ptt(keyword, limit=10, max_pages=20):
     PTT_URL = "https://www.ptt.cc"
     cookies = {"over18": "1"}
     headers = {"User-Agent": "Mozilla/5.0"}
     keywords = get_keywords(keyword)
     articles = []
-    # 找最新頁碼
+
     try:
         res = requests.get(f"{PTT_URL}/bbs/Gossiping/index.html", headers=headers, cookies=cookies)
         soup = BeautifulSoup(res.text, "html.parser")
@@ -85,7 +120,7 @@ def fetch_ptt(keyword, limit=10, max_pages=20):
                     break
     except:
         return []
-    # 翻頁抓文章
+
     for page_num in range(max_index, max_index - max_pages, -1):
         if page_num <= 0:
             break
@@ -97,13 +132,17 @@ def fetch_ptt(keyword, limit=10, max_pages=20):
                 title = a.text.strip()
                 link = PTT_URL + a["href"]
                 score = compute_score(title, keywords)
-                if score >= 2:   # 過濾低相關
+                if score >= 2:
                     articles.append({"title": title, "link": link, "score": score, "source": "PTT"})
         except:
             continue
+
     articles.sort(key=lambda x: x["score"], reverse=True)
     return articles[:limit]
-# ===== 5️⃣ 新聞 RSS 搜尋 =====
+
+# =========================
+# 5️⃣ 新聞 RSS 搜尋
+# =========================
 def fetch_news(keyword, limit=10):
     RSS_URL = "https://news.ltn.com.tw/rss/all.xml"
     articles = []
@@ -122,38 +161,33 @@ def fetch_news(keyword, limit=10):
 
     articles.sort(key=lambda x: x["score"], reverse=True)
     return articles[:limit]
-# ===== 6️⃣ 計算文章分數（語意 + 關鍵字）=====
-def compute_score(text, keywords):
-    query_emb = model.encode(st.session_state.keyword)
-    sem = semantic_score(query_emb, text)
-    key = keyword_score(text, keywords)
-    return sem * 0.7 + key * 0.3
-# ===== 7️⃣ UI =====
+
+# =========================
+# 6️⃣ UI
+# =========================
 st.title("🔍 智能搜尋器 Pro")
-# 輸入欄位 + 筆數
+
 col1, col2 = st.columns([3,1])
 with col1:
     keyword = st.text_input("輸入關鍵字", value=st.session_state.keyword)
 with col2:
     limit = st.selectbox("筆數", [5, 10, 20])
-# 選擇來源
+
 source = st.radio("資料來源", ["PTT", "新聞", "全部"])
-# ===== 8️⃣ 搜尋按鈕 =====
+
 if st.button("開始搜尋 🔍") and keyword:
     with st.spinner("搜尋 + AI分析中..."):
         data = []
-        # 一次抓齊所有來源
-        data += fetch_ptt(keyword, limit)
-        data += fetch_news(keyword, limit)
-        # 排序
+        if source in ["PTT", "全部"]:
+            data += fetch_ptt(keyword, limit)
+        if source in ["新聞", "全部"]:
+            data += fetch_news(keyword, limit)
         data.sort(key=lambda x: x["score"], reverse=True)
         st.session_state.data = data
         st.session_state.keyword = keyword
         st.session_state.searched = True
 
-# ===== 9️⃣ 顯示結果 =====
 if st.session_state.searched:
-    # radio 篩選資料
     if source == "PTT":
         show_data = [d for d in st.session_state.data if d["source"] == "PTT"]
     elif source == "新聞":
