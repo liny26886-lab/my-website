@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import feedparser
 import re
+import os
 import onnxruntime
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -14,17 +15,17 @@ from sentence_transformers import SentenceTransformer
 # =========================
 @st.cache_resource
 def load_onnx_model():
-    # Tokenizer 用原本 SentenceTransformer 的
+    st.info("正在載入 ONNX 模型，請稍候...")
     tokenizer = SentenceTransformer('paraphrase-MiniLM-L3-v2').tokenizer
     session = onnxruntime.InferenceSession("MiniLM-L3-onnx/model.onnx")
+    st.success("模型載入完成 ✅")
     return tokenizer, session
 
-# 先不要載入模型，按需載入
 model_loaded = False
 tokenizer, session = None, None
 
 # =========================
-# 2️⃣ 將文字編碼成向量（批次處理）
+# 2️⃣ 文字編碼函數（批次處理）
 # =========================
 def encode_onnx(texts, batch_size=5):
     global tokenizer, session, model_loaded
@@ -85,24 +86,6 @@ def keyword_score(text, keywords):
             score += 3
     return score
 
-def extract_summary(text, n=2):
-    sentences = re.split(r'[。！？]', text)
-    sentences = [s for s in sentences if len(s.strip()) > 5]
-    if len(sentences) <= n:
-        return text
-    try:
-        vectorizer = TfidfVectorizer()
-        X = vectorizer.fit_transform(sentences)
-        scores = X.sum(axis=1)
-        ranked = sorted(
-            ((scores[i, 0], s) for i, s in enumerate(sentences)),
-            reverse=True
-        )
-        summary = "。".join([s for _, s in ranked[:n]])
-        return summary
-    except:
-        return text[:100]
-
 def compute_score(text, keywords):
     sem = semantic_score(st.session_state.keyword, text)
     key = keyword_score(text, keywords)
@@ -112,6 +95,7 @@ def compute_score(text, keywords):
 # 5️⃣ PTT 搜尋
 # =========================
 def fetch_ptt(keyword, limit=10, max_pages=20):
+    st.info("正在搜尋 PTT...")
     PTT_URL = "https://www.ptt.cc"
     cookies = {"over18": "1"}
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -119,7 +103,7 @@ def fetch_ptt(keyword, limit=10, max_pages=20):
     articles = []
 
     try:
-        res = requests.get(f"{PTT_URL}/bbs/Gossiping/index.html", headers=headers, cookies=cookies)
+        res = requests.get(f"{PTT_URL}/bbs/Gossiping/index.html", headers=headers, cookies=cookies, timeout=5)
         soup = BeautifulSoup(res.text, "html.parser")
         btn = soup.select("a.btn.wide")
         max_index = 0
@@ -137,7 +121,7 @@ def fetch_ptt(keyword, limit=10, max_pages=20):
             break
         try:
             res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page_num}.html",
-                               headers=headers, cookies=cookies)
+                               headers=headers, cookies=cookies, timeout=5)
             soup = BeautifulSoup(res.text, "html.parser")
             for a in soup.select(".r-ent .title a"):
                 title = a.text.strip()
@@ -155,6 +139,7 @@ def fetch_ptt(keyword, limit=10, max_pages=20):
 # 6️⃣ 新聞 RSS 搜尋
 # =========================
 def fetch_news(keyword, limit=10):
+    st.info("正在搜尋新聞...")
     RSS_URL = "https://news.ltn.com.tw/rss/all.xml"
     articles = []
     keywords = get_keywords(keyword)
@@ -216,3 +201,10 @@ if st.session_state.searched:
             <a href="{article['link']}" target="_blank">查看文章</a>
         </div>
         """, unsafe_allow_html=True)
+
+# =========================
+# 8️⃣ Render Port 設定
+# =========================
+# Streamlit 會自動用 Render 提供的 $PORT
+port = int(os.environ.get("PORT", 8501))
+st.write(f"應用正在運行在 port {port}")
