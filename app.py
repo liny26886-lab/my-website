@@ -92,7 +92,7 @@ def load_model_with_progress(overall_progress):
     model_dict = {}
     overall_progress.text("Step 1/3: 初始化 tokenizer …")
     time.sleep(0.2)
-    model_dict['tokenizer'] = SentenceTransformer('paraphrase-MiniLM-L3-v2').tokenizer
+    model_dict['tokenizer'] = SentenceTransformer('./model').tokenizer
     overall_progress.progress(10)
 
     overall_progress.text("Step 2/3: 初始化 ONNX session …")
