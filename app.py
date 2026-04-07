@@ -93,8 +93,22 @@ def load_model_with_progress(overall_progress):
     model_dict = {}
 
     # Step 1: 初始化 tokenizer
+    from sentence_transformers import SentenceTransformer
+
+def load_model_with_progress(overall_progress):
+    import onnxruntime
+    import json
+    import numpy as np
+
+    model_dict = {}
+
+    # Step 1: 初始化 tokenizer
     overall_progress.text("Step 1/3: 初始化 tokenizer …")
     time.sleep(0.2)
+    tokenizer = SentenceTransformer('./model').tokenizer   # ⚠️ 這一行很重要
+    model_dict['tokenizer'] = tokenizer
+
+    # 也可以存 config
     with open("model/tokenizer.json", "r", encoding="utf-8") as f:
         tokenizer_config = json.load(f)
     model_dict['tokenizer_config'] = tokenizer_config
@@ -111,7 +125,7 @@ def load_model_with_progress(overall_progress):
     time.sleep(0.2)
     overall_progress.progress(100)
     st.success("模型成功載入 ✅")
-
+    
     return model_dict
 
 # =========================
