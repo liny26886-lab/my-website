@@ -86,24 +86,34 @@ def compute_score(text, keywords):
 # 5️⃣ 模型載入（延遲 import）
 # =========================
 def load_model_with_progress(overall_progress):
+    def load_model_with_progress(overall_progress):
     import onnxruntime
-    from sentence_transformers import SentenceTransformer
+    import json
+    import numpy as np
 
     model_dict = {}
+
+    # Step 1: 初始化 tokenizer
     overall_progress.text("Step 1/3: 初始化 tokenizer …")
     time.sleep(0.2)
-    model_dict['tokenizer'] = SentenceTransformer('./model').tokenizer
+    with open("model/tokenizer.json", "r", encoding="utf-8") as f:
+        tokenizer_config = json.load(f)
+    # 這裡直接存 tokenization 配置，不用 SentenceTransformer
+    model_dict['tokenizer_config'] = tokenizer_config
     overall_progress.progress(10)
 
+    # Step 2: 初始化 ONNX session
     overall_progress.text("Step 2/3: 初始化 ONNX session …")
     time.sleep(0.2)
     model_dict['session'] = onnxruntime.InferenceSession("model.onnx")
     overall_progress.progress(50)
 
+    # Step 3: 模型載入完成
     overall_progress.text("Step 3/3: 模型載入完成 ✅")
     time.sleep(0.2)
     overall_progress.progress(100)
     st.success("模型成功載入 ✅")
+
     return model_dict
 
 # =========================
