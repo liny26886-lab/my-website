@@ -82,50 +82,36 @@ def compute_score(text, keywords):
     key = keyword_score(text, keywords)
     return sem * 0.7 + key * 0.3
 
-# =========================
 # 5️⃣ 模型載入（延遲 import）
 # =========================
 def load_model_with_progress(overall_progress):
     import onnxruntime
-    import json
-    import numpy as np
-
-    model_dict = {}
-
-    # Step 1: 初始化 tokenizer
-    from sentence_transformers import SentenceTransformer
-
-def load_model_with_progress(overall_progress):
-    import onnxruntime
-    import json
-    import numpy as np
+    from transformers import AutoTokenizer
+    import time
 
     model_dict = {}
 
     # Step 1: 初始化 tokenizer
     overall_progress.text("Step 1/3: 初始化 tokenizer …")
     time.sleep(0.2)
-    tokenizer = SentenceTransformer('./model').tokenizer   # ⚠️ 這一行很重要
+    tokenizer = AutoTokenizer.from_pretrained("./model")  # 只載入 tokenizer
     model_dict['tokenizer'] = tokenizer
-
-    # 也可以存 config
-    with open("model/tokenizer.json", "r", encoding="utf-8") as f:
-        tokenizer_config = json.load(f)
-    model_dict['tokenizer_config'] = tokenizer_config
     overall_progress.progress(10)
 
     # Step 2: 初始化 ONNX session
     overall_progress.text("Step 2/3: 初始化 ONNX session …")
     time.sleep(0.2)
-    model_dict['session'] = onnxruntime.InferenceSession("model.onnx")
+    session = onnxruntime.InferenceSession("model.onnx")
+    model_dict['session'] = session
     overall_progress.progress(50)
 
     # Step 3: 模型載入完成
     overall_progress.text("Step 3/3: 模型載入完成 ✅")
     time.sleep(0.2)
     overall_progress.progress(100)
+    import streamlit as st
     st.success("模型成功載入 ✅")
-    
+
     return model_dict
 
 # =========================
