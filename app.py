@@ -5,6 +5,7 @@ import feedparser
 import re
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from threading import Thread
 
 # =========================
 # 1️⃣ 設定
@@ -52,13 +53,13 @@ def highlight(text, keyword):
         return text
 
 # =========================
-# 4️⃣ ONNX encode（修正版）
+# 4️⃣ ONNX encode（🔥完全修復版）
 # =========================
 def encode_onnx(texts, tokenizer, session, batch_size=8):
     if isinstance(texts, str):
         texts = [texts]
 
-    embeddings_list = []
+    embeddings = []
 
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
@@ -71,17 +72,16 @@ def encode_onnx(texts, tokenizer, session, batch_size=8):
             return_tensors="np"
         )
 
-        inputs = {k: v.astype("int64") for k, v in inputs.items()}
+        # 🔥 強制對齊 ONNX input schema
+        ort_inputs = {
+            "input_ids": inputs["input_ids"].astype("int64"),
+            "attention_mask": inputs["attention_mask"].astype("int64")
+        }
 
-        ort_inputs = {}
-        for inp in session.get_inputs():
-            if inp.name in inputs:
-                ort_inputs[inp.name] = inputs[inp.name]
+        out = session.run(None, ort_inputs)[0]
+        embeddings.append(out)
 
-        ort_outs = session.run(None, ort_inputs)
-        embeddings_list.append(ort_outs[0])
-
-    return np.vstack(embeddings_list)
+    return np.vstack(embeddings)
 
 # =========================
 # 5️⃣ scoring
@@ -97,12 +97,12 @@ def compute_scores_batch(texts, keywords):
     for i, text in enumerate(texts):
         sem = cosine_similarity(q_vec, t_vecs[i].reshape(1, -1))[0][0]
         key = keyword_score(text, keywords)
-        scores.append(sem * 0.7 + key * 0.3)
+        scores.append(sem * 0.5 + key * 0.5)
 
     return scores
 
 # =========================
-# 6️⃣ 模型載入（含進度）
+# 6️⃣ 模型
 # =========================
 def load_model():
     import onnxruntime
@@ -112,17 +112,17 @@ def load_model():
     progress_bar.progress(20)
     tokenizer = AutoTokenizer.from_pretrained("./model")
 
-    progress_text.text("載入 ONNX 模型...")
+    progress_text.text("載入 ONNX...")
     progress_bar.progress(60)
     session = onnxruntime.InferenceSession("model.onnx")
 
-    progress_text.text("模型載入完成")
+    progress_text.text("完成")
     progress_bar.progress(100)
 
     return {"tokenizer": tokenizer, "session": session}
 
 # =========================
-# 7️⃣ PTT
+# 7️⃣ PTT（穩定版）
 # =========================
 def fetch_ptt(keyword, limit=10, max_pages=3):
     PTT_URL = "https://www.ptt.cc"
@@ -150,8 +150,8 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
 
     for i, page in enumerate(range(max_index, max_index-max_pages, -1), 1):
 
-        progress_text.text(f"抓取 PTT 第 {i}/{max_pages} 頁")
-        progress_bar.progress(int(i / max_pages * 50))
+        progress_text.text(f"PTT {i}/{max_pages}")
+        progress_bar.progress(int(i / max_pages * 40))
 
         try:
             res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page}.html",
@@ -170,7 +170,7 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
             scores = compute_scores_batch(titles, keywords)
 
             for t, l, s in zip(titles, links, scores):
-                if s >= 2:
+                if s >= 1.2:
                     articles.append({
                         "title": t,
                         "link": l,
@@ -181,19 +181,29 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
         except:
             continue
 
-    return sorted(articles, key=lambda x: x["score"], reverse=True)[:limit]
+    return articles
 
 # =========================
-# 8️⃣ News
+# 8️⃣ News（🔥完整修復版）
 # =========================
 def fetch_news(keyword, limit=10):
     RSS = "https://news.ltn.com.tw/rss/all.xml"
-    keywords = get_keywords(keyword)
 
     feed = feedparser.parse(RSS)
 
-    titles = [BeautifulSoup(e.title, "html.parser").text for e in feed.entries]
-    links = [e.link for e in feed.entries]
+    # 🔥 防空 title + 清理
+    titles = [
+        BeautifulSoup(e.title, "html.parser").text
+        for e in feed.entries
+        if hasattr(e, "title") and e.title
+    ]
+
+    links = [e.link for e in feed.entries if hasattr(e, "link")]
+
+    if len(titles) == 0:
+        return []
+
+    keywords = get_keywords(keyword)
 
     scores = compute_scores_batch(titles, keywords)
 
@@ -201,10 +211,10 @@ def fetch_news(keyword, limit=10):
 
     for i, (t, l, s) in enumerate(zip(titles, links, scores), 1):
 
-        progress_text.text(f"分析新聞 {i}/{len(titles)}")
-        progress_bar.progress(50 + int(i / len(titles) * 50))
+        progress_text.text(f"News {i}/{len(titles)}")
+        progress_bar.progress(40 + int(i / len(titles) * 60))
 
-        if s >= 2:
+        if s >= 1.2:
             articles.append({
                 "title": t,
                 "link": l,
@@ -212,12 +222,34 @@ def fetch_news(keyword, limit=10):
                 "source": "新聞"
             })
 
-    return sorted(articles, key=lambda x: x["score"], reverse=True)[:limit]
+    return articles
 
 # =========================
-# 9️⃣ UI
+# 9️⃣ 平行搜尋
 # =========================
-st.title("🔍 智能搜尋器 Pro（穩定版）")
+def parallel_search(keyword, limit, source):
+    results = {}
+
+    def run_ptt():
+        results["ptt"] = fetch_ptt(keyword, limit) if source in ["PTT", "全部"] else []
+
+    def run_news():
+        results["news"] = fetch_news(keyword, limit) if source in ["新聞", "全部"] else []
+
+    t1 = Thread(target=run_ptt)
+    t2 = Thread(target=run_news)
+
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    return results.get("ptt", []) + results.get("news", [])
+
+# =========================
+# 🔟 UI
+# =========================
+st.title("🔍 智能搜尋器 Pro（穩定最終版）")
 
 col1, col2 = st.columns([3, 1])
 
@@ -240,13 +272,7 @@ if not st.session_state.model_loaded:
 if st.session_state.model_loaded and st.button("開始搜尋"):
     st.session_state.keyword = keyword_input
 
-    data = []
-
-    if source in ["PTT", "全部"]:
-        data += fetch_ptt(keyword_input, limit)
-
-    if source in ["新聞", "全部"]:
-        data += fetch_news(keyword_input, limit)
+    data = parallel_search(keyword_input, limit, source)
 
     st.session_state.data = sorted(data, key=lambda x: x["score"], reverse=True)
     st.session_state.searched = True
