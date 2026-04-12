@@ -216,21 +216,17 @@ def fetch_news(keyword, limit=10):
 def parallel_search(keyword, limit, source):
     results = {}
 
-    def run_ptt():
-        results["ptt"] = fetch_ptt(keyword, limit) if source in ["PTT", "全部"] else []
+    if source in ["PTT", "全部"]:
+        results["ptt"] = fetch_ptt(keyword, limit)
+    else:
+        results["ptt"] = []
 
-    def run_news():
-        results["news"] = fetch_news(keyword, limit) if source in ["新聞", "全部"] else []
+    if source in ["新聞", "全部"]:
+        results["news"] = fetch_news(keyword, limit)
+    else:
+        results["news"] = []
 
-    t1 = Thread(target=run_ptt)
-    t2 = Thread(target=run_news)
-
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-
-    return results.get("ptt", []) + results.get("news", [])
+    return results["ptt"] + results["news"]
 
 # =========================
 # 🔟 UI
