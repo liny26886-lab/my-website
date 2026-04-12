@@ -97,7 +97,7 @@ def compute_scores_batch(texts, keywords):
     for i, text in enumerate(texts):
         sem = cosine_similarity(q_vec, t_vecs[i].reshape(1, -1))[0][0]
         key = keyword_score(text, keywords)
-        scores.append(sem * 0.5 + key * 0.5)
+        scores.append(sem * 0.2 + key * 0.8)
 
     return scores
 
@@ -170,7 +170,7 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
             scores = compute_scores_batch(titles, keywords)
 
             for t, l, s in zip(titles, links, scores):
-                if s >= 1.2:
+                if s >= 1:
                     articles.append({
                         "title": t,
                         "link": l,
@@ -214,7 +214,7 @@ def fetch_news(keyword, limit=10):
         progress_text.text(f"News {i}/{len(titles)}")
         progress_bar.progress(40 + int(i / len(titles) * 60))
 
-        if s >= 1.2:
+        if s >= 1:
             articles.append({
                 "title": t,
                 "link": l,
