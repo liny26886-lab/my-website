@@ -97,8 +97,8 @@ def compute_scores_batch(texts, keywords):
     for i, text in enumerate(texts):
         sem = cosine_similarity(q_vec, t_vecs[i].reshape(1, -1))[0][0]
         key = keyword_score(text, keywords)
-        scores.append(sem * 0.2 + key * 0.8)
-
+        scores.append(sem * 5 + key * 0.8)
+        st.sidebar.write("SEM:", sem, "KEY:", key)
     return scores
 
 # =========================
