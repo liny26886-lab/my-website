@@ -3,7 +3,6 @@ import requests
 from bs4 import BeautifulSoup
 import feedparser
 import re
-import os
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -11,6 +10,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 # 1️⃣ 設定
 # =========================
 st.set_page_config(page_title="智能搜尋器 Pro", layout="wide")
+
+progress_text = st.empty()
+progress_bar = st.progress(0)
 
 # =========================
 # 2️⃣ Session
@@ -32,11 +34,9 @@ if "keyword" not in st.session_state:
 def get_keywords(keyword):
     return [k for k in re.split(r"\s+", keyword) if k]
 
-
 def keyword_score(text, keywords):
     text = text.lower()
     return sum(3 for kw in keywords if kw.lower() in text)
-
 
 def highlight(text, keyword):
     if not text or not keyword:
@@ -51,9 +51,8 @@ def highlight(text, keyword):
     except:
         return text
 
-
 # =========================
-# 4️⃣ ONNX encode（🔥核心修正版）
+# 4️⃣ ONNX encode（修正版）
 # =========================
 def encode_onnx(texts, tokenizer, session, batch_size=8):
     if isinstance(texts, str):
@@ -76,20 +75,20 @@ def encode_onnx(texts, tokenizer, session, batch_size=8):
 
         ort_inputs = {}
         for inp in session.get_inputs():
-            ort_inputs[inp.name] = inputs[inp.name]
+            if inp.name in inputs:
+                ort_inputs[inp.name] = inputs[inp.name]
 
         ort_outs = session.run(None, ort_inputs)
         embeddings_list.append(ort_outs[0])
 
     return np.vstack(embeddings_list)
 
-
 # =========================
-# 5️⃣ 批次 scoring（🔥升級）
+# 5️⃣ scoring
 # =========================
 def compute_scores_batch(texts, keywords):
-    tokenizer = st.session_state.model['tokenizer']
-    session = st.session_state.model['session']
+    tokenizer = st.session_state.model["tokenizer"]
+    session = st.session_state.model["session"]
 
     q_vec = encode_onnx(st.session_state.keyword, tokenizer, session)
     t_vecs = encode_onnx(texts, tokenizer, session)
@@ -102,30 +101,34 @@ def compute_scores_batch(texts, keywords):
 
     return scores
 
-
 # =========================
-# 6️⃣ 模型載入
+# 6️⃣ 模型載入（含進度）
 # =========================
 def load_model():
     import onnxruntime
     from transformers import AutoTokenizer
 
+    progress_text.text("載入 tokenizer...")
+    progress_bar.progress(20)
     tokenizer = AutoTokenizer.from_pretrained("./model")
+
+    progress_text.text("載入 ONNX 模型...")
+    progress_bar.progress(60)
     session = onnxruntime.InferenceSession("model.onnx")
 
-    return {
-        "tokenizer": tokenizer,
-        "session": session
-    }
+    progress_text.text("模型載入完成")
+    progress_bar.progress(100)
 
+    return {"tokenizer": tokenizer, "session": session}
 
 # =========================
 # 7️⃣ PTT
 # =========================
-def fetch_ptt(keyword, limit=10, max_pages=3, progress=None):
+def fetch_ptt(keyword, limit=10, max_pages=3):
     PTT_URL = "https://www.ptt.cc"
     cookies = {"over18": "1"}
     headers = {"User-Agent": "Mozilla/5.0"}
+
     keywords = get_keywords(keyword)
     articles = []
 
@@ -146,6 +149,10 @@ def fetch_ptt(keyword, limit=10, max_pages=3, progress=None):
         return []
 
     for i, page in enumerate(range(max_index, max_index-max_pages, -1), 1):
+
+        progress_text.text(f"抓取 PTT 第 {i}/{max_pages} 頁")
+        progress_bar.progress(int(i / max_pages * 50))
+
         try:
             res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page}.html",
                                headers=headers, cookies=cookies)
@@ -176,14 +183,12 @@ def fetch_ptt(keyword, limit=10, max_pages=3, progress=None):
 
     return sorted(articles, key=lambda x: x["score"], reverse=True)[:limit]
 
-
 # =========================
 # 8️⃣ News
 # =========================
 def fetch_news(keyword, limit=10):
     RSS = "https://news.ltn.com.tw/rss/all.xml"
     keywords = get_keywords(keyword)
-    articles = []
 
     feed = feedparser.parse(RSS)
 
@@ -192,7 +197,13 @@ def fetch_news(keyword, limit=10):
 
     scores = compute_scores_batch(titles, keywords)
 
-    for t, l, s in zip(titles, links, scores):
+    articles = []
+
+    for i, (t, l, s) in enumerate(zip(titles, links, scores), 1):
+
+        progress_text.text(f"分析新聞 {i}/{len(titles)}")
+        progress_bar.progress(50 + int(i / len(titles) * 50))
+
         if s >= 2:
             articles.append({
                 "title": t,
@@ -203,11 +214,10 @@ def fetch_news(keyword, limit=10):
 
     return sorted(articles, key=lambda x: x["score"], reverse=True)[:limit]
 
-
 # =========================
 # 9️⃣ UI
 # =========================
-st.title("🔍 智能搜尋器 Pro（最終穩定版）")
+st.title("🔍 智能搜尋器 Pro（穩定版）")
 
 col1, col2 = st.columns([3, 1])
 
@@ -229,7 +239,6 @@ if not st.session_state.model_loaded:
 # search
 if st.session_state.model_loaded and st.button("開始搜尋"):
     st.session_state.keyword = keyword_input
-    keywords = get_keywords(keyword_input)
 
     data = []
 
@@ -241,6 +250,9 @@ if st.session_state.model_loaded and st.button("開始搜尋"):
 
     st.session_state.data = sorted(data, key=lambda x: x["score"], reverse=True)
     st.session_state.searched = True
+
+    progress_text.text("完成")
+    progress_bar.progress(100)
 
 # show
 if st.session_state.searched:
