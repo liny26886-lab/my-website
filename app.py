@@ -154,21 +154,17 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
         progress_bar.progress(int(i / max_pages * 40))
 
         try:
+            st.write("ppt")
             res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page}.html",
                                headers=headers, cookies=cookies)
             soup = BeautifulSoup(res.text, "html.parser")
-
             titles, links = [], []
-
             for a in soup.select(".r-ent .title a"):
                 titles.append(a.text.strip())
                 links.append(PTT_URL + a["href"])
-
             if not titles:
                 continue
-
             scores = compute_scores_batch(titles, keywords)
-
             for t, l, s in zip(titles, links, scores):
                 if s >= 1:
                     articles.append({
@@ -188,32 +184,23 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
 # =========================
 def fetch_news(keyword, limit=10):
     RSS = "https://news.ltn.com.tw/rss/all.xml"
-
     feed = feedparser.parse(RSS)
-
     # 🔥 防空 title + 清理
     titles = [
         BeautifulSoup(e.title, "html.parser").text
         for e in feed.entries
         if hasattr(e, "title") and e.title
     ]
-
     links = [e.link for e in feed.entries if hasattr(e, "link")]
-
     if len(titles) == 0:
         return []
-
     keywords = get_keywords(keyword)
-
+    st.write("news")
     scores = compute_scores_batch(titles, keywords)
-
     articles = []
-
     for i, (t, l, s) in enumerate(zip(titles, links, scores), 1):
-
         progress_text.text(f"News {i}/{len(titles)}")
         progress_bar.progress(40 + int(i / len(titles) * 60))
-
         if s >= 1:
             articles.append({
                 "title": t,
@@ -221,7 +208,6 @@ def fetch_news(keyword, limit=10):
                 "score": s,
                 "source": "新聞"
             })
-
     return articles
 
 # =========================
@@ -271,12 +257,10 @@ if not st.session_state.model_loaded:
 # search
 if st.session_state.model_loaded and st.button("開始搜尋"):
     st.session_state.keyword = keyword_input
-
     data = parallel_search(keyword_input, limit, source)
-
     st.session_state.data = sorted(data, key=lambda x: x["score"], reverse=True)
     st.session_state.searched = True
-
+    st.write("search")
     progress_text.text("完成")
     progress_bar.progress(100)
 
