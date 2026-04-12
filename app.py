@@ -46,7 +46,7 @@ def highlight(text, keyword):
         return text
 
 # =========================
-# 4️⃣ PTT 搜尋
+# 4️⃣ PTT 搜尋（穩定版）
 # =========================
 def fetch_ptt(keyword, limit=10, max_pages=3):
     PTT_URL = "https://www.ptt.cc"
@@ -57,8 +57,12 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
     articles = []
 
     try:
-        res = requests.get(f"{PTT_URL}/bbs/Gossiping/index.html",
-                           headers=headers, cookies=cookies, timeout=5)
+        res = requests.get(
+            f"{PTT_URL}/bbs/Gossiping/index.html",
+            headers=headers,
+            cookies=cookies,
+            timeout=5
+        )
         soup = BeautifulSoup(res.text, "html.parser")
 
         btn = soup.select("a.btn.wide")
@@ -77,8 +81,12 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
         progress_bar.progress(int(i / max_pages * 50))
 
         try:
-            res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page}.html",
-                               headers=headers, cookies=cookies, timeout=5)
+            res = requests.get(
+                f"{PTT_URL}/bbs/Gossiping/index{page}.html",
+                headers=headers,
+                cookies=cookies,
+                timeout=5
+            )
             soup = BeautifulSoup(res.text, "html.parser")
 
             for a in soup.select(".r-ent .title a"):
@@ -101,7 +109,7 @@ def fetch_ptt(keyword, limit=10, max_pages=3):
     return articles
 
 # =========================
-# 5️⃣ News 搜尋
+# 5️⃣ News 搜尋（穩定版）
 # =========================
 def fetch_news(keyword, limit=10):
     RSS = "https://news.ltn.com.tw/rss/all.xml"
@@ -118,9 +126,11 @@ def fetch_news(keyword, limit=10):
             titles.append(e.title)
             links.append(e.link)
 
+    total = max(len(titles), 1)
+
     for i, (t, l) in enumerate(zip(titles, links), 1):
-        progress_text.text(f"News {i}/{len(titles)}")
-        progress_bar.progress(50 + int(i / len(titles) * 50))
+        progress_text.text(f"News {i}/{total}")
+        progress_bar.progress(50 + int(i / total * 50))
 
         score = keyword_score(t, keywords)
 
@@ -150,7 +160,7 @@ with col2:
 source = st.radio("資料來源", ["PTT", "新聞", "全部"])
 
 # =========================
-# 7️⃣ 搜尋
+# 7️⃣ 搜尋邏輯
 # =========================
 if st.button("開始搜尋 🔍"):
     st.session_state.keyword = keyword_input
