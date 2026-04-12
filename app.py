@@ -4,18 +4,16 @@ from bs4 import BeautifulSoup
 import feedparser
 import re
 import os
-import time
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 # =========================
-# 1️⃣ Render Port 設定
+# 1️⃣ 設定
 # =========================
-port = int(os.environ.get("PORT", 8501))
 st.set_page_config(page_title="智能搜尋器 Pro", layout="wide")
 
 # =========================
-# 2️⃣ Session 初始化
+# 2️⃣ Session
 # =========================
 if "model_loaded" not in st.session_state:
     st.session_state.model_loaded = False
@@ -29,10 +27,16 @@ if "keyword" not in st.session_state:
     st.session_state.keyword = ""
 
 # =========================
-# 3️⃣ 工具函數
+# 3️⃣ 工具
 # =========================
 def get_keywords(keyword):
     return [k for k in re.split(r"\s+", keyword) if k]
+
+
+def keyword_score(text, keywords):
+    text = text.lower()
+    return sum(3 for kw in keywords if kw.lower() in text)
+
 
 def highlight(text, keyword):
     if not text or not keyword:
@@ -47,77 +51,78 @@ def highlight(text, keyword):
     except:
         return text
 
+
 # =========================
-# 4️⃣ ONNX 推理函數（依賴延遲 import）
+# 4️⃣ ONNX encode（🔥核心修正版）
 # =========================
-def encode_onnx(texts, tokenizer, session, batch_size=5):
+def encode_onnx(texts, tokenizer, session, batch_size=8):
     if isinstance(texts, str):
         texts = [texts]
+
     embeddings_list = []
+
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
-        inputs = tokenizer(batch, padding=True, truncation=True, return_tensors="np")
-        allowed_keys = {inp.name for inp in session.get_inputs()}
-        ort_inputs = {k: v for k, v in inputs.items() if k in allowed_keys}
+
+        inputs = tokenizer(
+            batch,
+            padding="max_length",
+            truncation=True,
+            max_length=128,
+            return_tensors="np"
+        )
+
+        inputs = {k: v.astype("int64") for k, v in inputs.items()}
+
+        ort_inputs = {}
+        for inp in session.get_inputs():
+            ort_inputs[inp.name] = inputs[inp.name]
+
         ort_outs = session.run(None, ort_inputs)
-        embeddings_list.extend(ort_outs[0])
-    return np.array(embeddings_list)
+        embeddings_list.append(ort_outs[0])
 
-def semantic_score(query, text):
-    tokenizer, session = st.session_state.model['tokenizer'], st.session_state.model['session']
-    q_vec = encode_onnx(query, tokenizer, session)
-    t_vec = encode_onnx(text, tokenizer, session)
-    return float(cosine_similarity(q_vec, t_vec)[0][0])
+    return np.vstack(embeddings_list)
 
-def keyword_score(text, keywords):
-    text = text.lower()
-    score = 0
-    for kw in keywords:
-        if kw.lower() in text:
-            score += 3
-    return score
 
-def compute_score(text, keywords):
-    sem = semantic_score(st.session_state.keyword, text)
-    key = keyword_score(text, keywords)
-    return sem * 0.7 + key * 0.3
-
-# 5️⃣ 模型載入（延遲 import）
 # =========================
-def load_model_with_progress(overall_progress):
+# 5️⃣ 批次 scoring（🔥升級）
+# =========================
+def compute_scores_batch(texts, keywords):
+    tokenizer = st.session_state.model['tokenizer']
+    session = st.session_state.model['session']
+
+    q_vec = encode_onnx(st.session_state.keyword, tokenizer, session)
+    t_vecs = encode_onnx(texts, tokenizer, session)
+
+    scores = []
+    for i, text in enumerate(texts):
+        sem = cosine_similarity(q_vec, t_vecs[i].reshape(1, -1))[0][0]
+        key = keyword_score(text, keywords)
+        scores.append(sem * 0.7 + key * 0.3)
+
+    return scores
+
+
+# =========================
+# 6️⃣ 模型載入
+# =========================
+def load_model():
     import onnxruntime
     from transformers import AutoTokenizer
-    import time
 
-    model_dict = {}
-
-    # Step 1: 初始化 tokenizer
-    overall_progress.text("Step 1/3: 初始化 tokenizer …")
-    time.sleep(0.2)
-    tokenizer = AutoTokenizer.from_pretrained("./model")  # 只載入 tokenizer
-    model_dict['tokenizer'] = tokenizer
-    overall_progress.progress(10)
-
-    # Step 2: 初始化 ONNX session
-    overall_progress.text("Step 2/3: 初始化 ONNX session …")
-    time.sleep(0.2)
+    tokenizer = AutoTokenizer.from_pretrained("./model")
     session = onnxruntime.InferenceSession("model.onnx")
-    model_dict['session'] = session
-    overall_progress.progress(50)
 
-    # Step 3: 模型載入完成
-    overall_progress.text("Step 3/3: 模型載入完成 ✅")
-    time.sleep(0.2)
-    overall_progress.progress(100)
-    import streamlit as st
-    st.success("模型成功載入 ✅")
+    return {
+        "tokenizer": tokenizer,
+        "session": session
+    }
 
-    return model_dict
 
 # =========================
-# 6️⃣ PTT 搜尋
+# 7️⃣ PTT
 # =========================
-def fetch_ptt(keyword, limit=10, max_pages=5, overall_progress=None):
+def fetch_ptt(keyword, limit=10, max_pages=3, progress=None):
     PTT_URL = "https://www.ptt.cc"
     cookies = {"over18": "1"}
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -125,123 +130,129 @@ def fetch_ptt(keyword, limit=10, max_pages=5, overall_progress=None):
     articles = []
 
     try:
-        res = requests.get(f"{PTT_URL}/bbs/Gossiping/index.html", headers=headers, cookies=cookies, timeout=5)
+        res = requests.get(f"{PTT_URL}/bbs/Gossiping/index.html",
+                           headers=headers, cookies=cookies)
         soup = BeautifulSoup(res.text, "html.parser")
+
         btn = soup.select("a.btn.wide")
         max_index = 0
         for b in btn:
             if "上頁" in b.text:
-                match = re.search(r"index(\d+).html", b["href"])
-                if match:
-                    max_index = int(match.group(1)) + 1
+                m = re.search(r"index(\d+).html", b["href"])
+                if m:
+                    max_index = int(m.group(1)) + 1
                     break
     except:
         return []
 
-    for i, page_num in enumerate(range(max_index, max_index - max_pages, -1), start=1):
-        if page_num <= 0:
-            break
-        if overall_progress:
-            overall_progress.text(f"抓取 PTT 第 {i}/{max_pages} 頁 …")
-            overall_progress.progress(10 + int(i/max_pages*30))
+    for i, page in enumerate(range(max_index, max_index-max_pages, -1), 1):
         try:
-            res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page_num}.html",
-                               headers=headers, cookies=cookies, timeout=5)
+            res = requests.get(f"{PTT_URL}/bbs/Gossiping/index{page}.html",
+                               headers=headers, cookies=cookies)
             soup = BeautifulSoup(res.text, "html.parser")
+
+            titles, links = [], []
+
             for a in soup.select(".r-ent .title a"):
-                title = a.text.strip()
-                link = PTT_URL + a["href"]
-                score = compute_score(title, keywords)
-                if score >= 2:
-                    articles.append({"title": title, "link": link, "score": score, "source": "PTT"})
+                titles.append(a.text.strip())
+                links.append(PTT_URL + a["href"])
+
+            if not titles:
+                continue
+
+            scores = compute_scores_batch(titles, keywords)
+
+            for t, l, s in zip(titles, links, scores):
+                if s >= 2:
+                    articles.append({
+                        "title": t,
+                        "link": l,
+                        "score": s,
+                        "source": "PTT"
+                    })
+
         except:
             continue
-    articles.sort(key=lambda x: x["score"], reverse=True)
-    return articles[:limit]
+
+    return sorted(articles, key=lambda x: x["score"], reverse=True)[:limit]
+
 
 # =========================
-# 7️⃣ 新聞 RSS 搜尋
+# 8️⃣ News
 # =========================
-def fetch_news(keyword, limit=10, overall_progress=None):
-    RSS_URL = "https://news.ltn.com.tw/rss/all.xml"
-    articles = []
+def fetch_news(keyword, limit=10):
+    RSS = "https://news.ltn.com.tw/rss/all.xml"
     keywords = get_keywords(keyword)
-    try:
-        feed = feedparser.parse(RSS_URL)
-    except:
-        return []
+    articles = []
 
-    total_entries = len(feed.entries)
-    for i, entry in enumerate(feed.entries, start=1):
-        if overall_progress:
-            overall_progress.text(f"抓取新聞 {i}/{total_entries} …")
-            overall_progress.progress(40 + int(i/total_entries*60))
-        title = BeautifulSoup(entry.title, "html.parser").text
-        link = entry.link
-        score = compute_score(title, keywords)
-        if score >= 2:
-            articles.append({"title": title, "link": link, "score": score, "source": "新聞"})
-    articles.sort(key=lambda x: x["score"], reverse=True)
-    return articles[:limit]
+    feed = feedparser.parse(RSS)
+
+    titles = [BeautifulSoup(e.title, "html.parser").text for e in feed.entries]
+    links = [e.link for e in feed.entries]
+
+    scores = compute_scores_batch(titles, keywords)
+
+    for t, l, s in zip(titles, links, scores):
+        if s >= 2:
+            articles.append({
+                "title": t,
+                "link": l,
+                "score": s,
+                "source": "新聞"
+            })
+
+    return sorted(articles, key=lambda x: x["score"], reverse=True)[:limit]
+
 
 # =========================
-# 8️⃣ UI
+# 9️⃣ UI
 # =========================
-st.title("🔍 智能搜尋器 Pro (含整體進度條)")
+st.title("🔍 智能搜尋器 Pro（最終穩定版）")
 
-col1, col2 = st.columns([3,1])
+col1, col2 = st.columns([3, 1])
+
 with col1:
     keyword_input = st.text_input("輸入關鍵字", value=st.session_state.keyword)
+
 with col2:
     limit = st.selectbox("筆數", [5, 10, 20])
 
 source = st.radio("資料來源", ["PTT", "新聞", "全部"])
 
-overall_progress = st.empty()
-progress_bar = st.progress(0)
-
-# 模型載入按鈕（延遲 import）
+# load model
 if not st.session_state.model_loaded:
     if st.button("載入模型"):
-        with st.spinner("模型載入中，請稍候..."):
-            st.session_state.model = load_model_with_progress(overall_progress)
-            st.session_state.model_loaded = True
+        st.session_state.model = load_model()
+        st.session_state.model_loaded = True
+        st.success("模型載入完成")
 
-# 搜尋按鈕
-if st.session_state.model_loaded and st.button("開始搜尋 🔍") and keyword_input:
+# search
+if st.session_state.model_loaded and st.button("開始搜尋"):
     st.session_state.keyword = keyword_input
-    st.session_state.data = []
+    keywords = get_keywords(keyword_input)
+
+    data = []
+
+    if source in ["PTT", "全部"]:
+        data += fetch_ptt(keyword_input, limit)
+
+    if source in ["新聞", "全部"]:
+        data += fetch_news(keyword_input, limit)
+
+    st.session_state.data = sorted(data, key=lambda x: x["score"], reverse=True)
     st.session_state.searched = True
 
-    with st.spinner("資料抓取中，請稍候..."):
-        data = []
-        if source in ["PTT", "全部"]:
-            data += fetch_ptt(keyword_input, limit, overall_progress=overall_progress)
-        if source in ["新聞", "全部"]:
-            data += fetch_news(keyword_input, limit, overall_progress=overall_progress)
-        data.sort(key=lambda x: x["score"], reverse=True)
-        st.session_state.data = data
-
-    overall_progress.text("全部抓取完成 ✅")
-    progress_bar.progress(100)
-    st.success("所有資料抓取完成 ✅")
-
-# 顯示結果
+# show
 if st.session_state.searched:
-    if source == "PTT":
-        show_data = [d for d in st.session_state.data if d["source"] == "PTT"]
-    elif source == "新聞":
-        show_data = [d for d in st.session_state.data if d["source"] == "新聞"]
-    else:
-        show_data = st.session_state.data
+    st.write(f"共 {len(st.session_state.data)} 筆結果")
 
-    st.write(f"共 {len(show_data)} 筆結果")
-    for article in show_data:
-        title = highlight(article["title"], st.session_state.keyword)
+    for a in st.session_state.data:
+        title = highlight(a["title"], st.session_state.keyword)
+
         st.markdown(f"""
         <div style="background:#1e1e1e;padding:15px;border-radius:10px;margin-bottom:10px;">
             <h4 style="color:white;">{title}</h4>
-            <p style="color:gray;">相關度：{article['score']:.2f}</p>
-            <a href="{article['link']}" target="_blank">查看文章</a>
+            <p style="color:gray;">相關度：{a['score']:.2f}</p>
+            <a href="{a['link']}" target="_blank">查看</a>
         </div>
         """, unsafe_allow_html=True)
