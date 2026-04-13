@@ -8,10 +8,8 @@ import re
 # 1️⃣ 設定
 # =========================
 st.set_page_config(page_title="智能搜尋器 Pro（穩定版）", layout="wide")
-
 progress_text = st.empty()
 progress_bar = st.progress(0)
-
 # =========================
 # 2️⃣ Session
 # =========================
@@ -21,7 +19,6 @@ if "searched" not in st.session_state:
     st.session_state.searched = False
 if "keyword" not in st.session_state:
     st.session_state.keyword = ""
-
 # =========================
 # 3️⃣ 工具
 # =========================
@@ -46,7 +43,7 @@ def highlight(text, keyword):
 # =========================
 # 4️⃣ PTT 搜尋（穩定版）
 # =========================
-def fetch_ptt_multi(keyword, limit=20, max_pages=2):
+def fetch_ptt_multi(keyword, limit=20, max_pages=10):
 
     boards = ["Gossiping", "Tech_Job", "Stock", "Soft_Job", "NBA"]
 
@@ -68,10 +65,8 @@ def fetch_ptt_multi(keyword, limit=20, max_pages=2):
                 timeout=5
             )
             soup = BeautifulSoup(res.text, "html.parser")
-
             btn = soup.select("a.btn.wide")
             max_index = 0
-
             for b in btn:
                 if "上頁" in b.text:
                     m = re.search(r"index(\d+).html", b["href"])
@@ -93,14 +88,10 @@ def fetch_ptt_multi(keyword, limit=20, max_pages=2):
                     timeout=5
                 )
                 soup = BeautifulSoup(res.text, "html.parser")
-
                 for a in soup.select(".r-ent .title a"):
-
                     title = a.text.strip()
                     link = PTT_URL + a["href"]
-
                     score = keyword_score(title, keywords)
-
                     if score > 1:
                         articles.append({
                             "title": f"[{board}] {title}",
@@ -112,7 +103,7 @@ def fetch_ptt_multi(keyword, limit=20, max_pages=2):
             except:
                 continue
 
-    return articles[:limit]
+    return articles
 
 # =========================
 # 5️⃣ News 搜尋（穩定版）
@@ -130,7 +121,7 @@ def fetch_google_news(keyword, limit=20):
             "score": 2,  # 基本分
             "source": "Google"
         })
-    return articles[:limit]
+    return articles
 def fetch_multi_news(keyword, limit=20):
 
     rss_list = [
@@ -154,20 +145,16 @@ def fetch_multi_news(keyword, limit=20):
                         "score": score,
                         "source": "新聞"
                     })
-    return articles[:limit]
+    return articles
 # =========================
 # 6️⃣ UI
 # =========================
 st.title("🔍 智能搜尋器 Pro（超穩關鍵字版）")
-
 col1, col2 = st.columns([3, 1])
-
 with col1:
-    keyword_input = st.text_input("輸入關鍵字", value=st.session_state.keyword)
-
+    keyword_input = st.text_input("輸入關鍵字")
 with col2:
     limit = st.selectbox("筆數", [5, 10, 20])
-
 source = st.radio("資料來源", ["PTT", "新聞", "全部"])
 
 # =========================
@@ -177,32 +164,27 @@ if st.button("開始搜尋 🔍"):
     st.session_state.keyword = keyword_input
     progress_text.text("開始搜尋...")
     progress_bar.progress(0)
-
     data = []
-
     if source in ["PTT", "全部"]:
         data += fetch_ptt_multi(keyword_input, limit)
-
+    progress_bar.progress(20)
     if source in ["新聞", "全部"]:
         data += fetch_multi_news(keyword_input, limit)
         data += fetch_google_news(keyword_input, limit)
+    progress_bar.progress(80)
     data.sort(key=lambda x: x["score"], reverse=True)
-
+    data[:limit]
     st.session_state.data = data
     st.session_state.searched = True
-
     progress_text.text("完成")
     progress_bar.progress(100)
-
 # =========================
 # 8️⃣ 顯示結果
 # =========================
 if st.session_state.searched:
     st.write(f"共 {len(st.session_state.data)} 筆結果")
-
     for a in st.session_state.data:
         title = highlight(a["title"], st.session_state.keyword)
-
         st.markdown(f"""
         <div style="background:#1e1e1e;padding:15px;border-radius:10px;margin-bottom:10px;">
             <h4 style="color:white;">{title}</h4>
