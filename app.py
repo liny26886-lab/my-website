@@ -173,7 +173,7 @@ if st.button("開始搜尋 🔍"):
         data += fetch_google_news(keyword_input, limit)
     progress_bar.progress(80)
     data.sort(key=lambda x: x["score"], reverse=True)
-    data[:limit]
+    data=data[:limit]
     st.session_state.data = data
     st.session_state.searched = True
     progress_text.text("完成")
