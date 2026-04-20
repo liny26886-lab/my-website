@@ -7,7 +7,7 @@ import re
 # =========================
 # 1️⃣ 設定
 # =========================
-st.set_page_config(page_title="智能搜尋器 Pro（穩定版）", layout="wide")
+st.set_page_config(page_title="多來源搜尋系統", layout="wide")
 progress_text = st.empty()
 progress_bar = st.progress(0)
 # =========================
@@ -149,13 +149,16 @@ def fetch_multi_news(keyword, limit=20):
 # =========================
 # 6️⃣ UI
 # =========================
-st.title("🔍 智能搜尋器 Pro（超穩關鍵字版）")
+st.title("🔍 多來源搜尋系統")
 col1, col2 = st.columns([3, 1])
 with col1:
     keyword_input = st.text_input("輸入關鍵字")
 with col2:
     limit = st.selectbox("筆數", [5, 10, 20])
-source = st.radio("資料來源", ["PTT", "新聞", "全部"])
+source = st.multiselect(
+    "資料來源",
+    ["PTT", "新聞","GoogleNews"]
+)
 
 # =========================
 # 7️⃣ 搜尋邏輯
@@ -165,11 +168,12 @@ if st.button("開始搜尋 🔍"):
     progress_text.text("開始搜尋...")
     progress_bar.progress(0)
     data = []
-    if source in ["PTT", "全部"]:
+    if "PTT" in source:
         data += fetch_ptt_multi(keyword_input, limit)
     progress_bar.progress(20)
-    if source in ["新聞", "全部"]:
+    if "新聞" in source:
         data += fetch_multi_news(keyword_input, limit)
+    if "GoogleNew" in source:
         data += fetch_google_news(keyword_input, limit)
     progress_bar.progress(80)
     data.sort(key=lambda x: x["score"], reverse=True)
