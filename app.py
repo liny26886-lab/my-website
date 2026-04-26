@@ -19,6 +19,8 @@ if "searched" not in st.session_state:
     st.session_state.searched = False
 if "keyword" not in st.session_state:
     st.session_state.keyword = ""
+if "seen" not in st.session_state:
+    st.session_state.seen = set()
 # =========================
 # 3️⃣ 工具
 # =========================
@@ -86,13 +88,15 @@ def fetch_ptt_multi(keyword, limit=20, max_pages=5):
                     title = a.text.strip()
                     link = PTT_URL + a["href"]
                     score = keyword_score(title, keywords)
-                    if score > 1:
+                    if score > 1 and link not in st.session_state.seen:
                         articles.append({
                             "title": f"[{board}] {title}",
                             "link": link,
                             "score": score,
                             "source": "PTT"
+                           
                         })
+                        st.session_state.seen.add(link)
             except:
                 continue
     return articles
@@ -107,12 +111,14 @@ def fetch_google_news(keyword, limit=20):
     for e in feed.entries[:limit]:
         title = BeautifulSoup(e.title, "html.parser").text
         link = e.link
-        articles.append({
+        if link not in st.session_state.seen:
+            articles.append({
             "title": title,
             "link": link,
             "score": 2,  # 基本分
             "source": "Google"
-        })
+            })
+            st.session_state.seen.add(link)
     return articles
 def fetch_multi_news(keyword, limit=20):
 
@@ -130,13 +136,15 @@ def fetch_multi_news(keyword, limit=20):
                 title = e.title
                 link = e.link
                 score = keyword_score(title, keywords)
-                if score > 1:
-                    articles.append({
-                        "title": title,
-                        "link": link,
-                        "score": score,
-                        "source": "新聞"
-                    })
+                if link not in st.session_state.seen:
+                    if score > 1:
+                        st.session_state.seen.add(link)
+                        articles.append({
+                            "title": title,
+                            "link": link,
+                            "score": score,
+                            "source": "新聞"
+                        })
     return articles
 # =========================
 # 6️⃣ UI
@@ -160,12 +168,13 @@ if st.button("開始搜尋 🔍"):
     progress_text.text("開始搜尋...")
     progress_bar.progress(0)
     data = []
+    st.session_state.seen = set()
     if "PTT" in source:
         data += fetch_ptt_multi(keyword_input, limit)
     progress_bar.progress(20)
     if "新聞" in source:
         data += fetch_multi_news(keyword_input, limit)
-    if "GoogleNew" in source:
+    if "GoogleNews" in source:
         data += fetch_google_news(keyword_input, limit)
     progress_bar.progress(80)
     data.sort(key=lambda x: x["score"], reverse=True)
