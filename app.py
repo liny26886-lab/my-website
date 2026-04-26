@@ -43,19 +43,16 @@ def highlight(text, keyword):
 # =========================
 # 4️⃣ PTT 搜尋（穩定版）
 # =========================
-def fetch_ptt_multi(keyword, limit=20, max_pages=10):
+def fetch_ptt_multi(keyword, limit=20, max_pages=5):
 
     boards = ["Gossiping", "Tech_Job", "Stock", "Soft_Job", "NBA"]
 
     PTT_URL = "https://www.ptt.cc"
     cookies = {"over18": "1"}
     headers = {"User-Agent": "Mozilla/5.0"}
-
     keywords = get_keywords(keyword)
     articles = []
-
     for board in boards:
-
         try:
             # 取得最新頁碼
             res = requests.get(
@@ -73,13 +70,10 @@ def fetch_ptt_multi(keyword, limit=20, max_pages=10):
                     if m:
                         max_index = int(m.group(1)) + 1
                         break
-
         except:
             continue
-
         # 抓多頁
         for page in range(max_index, max_index - max_pages, -1):
-
             try:
                 res = requests.get(
                     f"{PTT_URL}/bbs/{board}/index{page}.html",
@@ -99,10 +93,8 @@ def fetch_ptt_multi(keyword, limit=20, max_pages=10):
                             "score": score,
                             "source": "PTT"
                         })
-
             except:
                 continue
-
     return articles
 
 # =========================
