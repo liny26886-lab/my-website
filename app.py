@@ -28,7 +28,7 @@ def get_keywords(keyword):
     return [k.lower() for k in re.split(r"\s+", keyword) if k]
 def keyword_score(text, keywords):
     text = text.lower()
-    return sum(2 for kw in keywords if kw in text)
+    return sum(3 for kw in keywords if kw in text)
 def highlight(text, keyword):
     if not text or not keyword:
         return text
